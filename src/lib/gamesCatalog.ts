@@ -227,10 +227,10 @@ export const GAME_CATEGORIES: GameCategory[] = [
     tag: 'لغة وتحدي',
     modes: [
       {
-        id: 'kalim-stack',
-        title: 'كَلِم',
+        id: 'three-letter-word',
+        title: 'كلمة ثلاثية',
         subtitle: 'تبديل وتكديس الحروف الثلاثية وتصفير اليد',
-        description: 'كلمة ثلاثية في الأرض ومعك 7 كروت.. بدّل حرف وكوّن كلمة جديدة من المعجم، وأول من يصفّر كروته يفوز!',
+        description: 'بدّل حرف واحد من كروتك ونزله فوق الكروت بالساحة لتكوين كلمة ثلاثية صحيحة.. أول من يخلّص كروته الثمانية يفوز!',
         minPlayers: 2,
         maxPlayers: 12,
         roundDurationMinutes: 5,

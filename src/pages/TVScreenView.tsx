@@ -33,7 +33,7 @@ import { BlindTourismTVView } from './tourism/BlindTourismTVView';
 import { ScattergoriesTVView } from './words/scattergories/ScattergoriesTVView';
 import { WordleRushTVView } from './words/wordle-rush/WordleRushTVView';
 import { PentagonClashTVView } from './words/pentagon-clash/PentagonClashTVView';
-import { KalimTVView } from './words/kalim-stack/KalimTVView';
+import { ThreeLetterWordTVView } from './words/three-letter-word/ThreeLetterWordTVView';
 import { WhoIsAiTVView } from './ai/who-is-ai/WhoIsAiTVView';
 import { AiLawyerTVView } from './ai/ai-lawyer/AiLawyerTVView';
 import { TheScammerTVView } from './ai/the-scammer/TheScammerTVView';
@@ -98,8 +98,13 @@ export const TVScreenView: React.FC = () => {
   if (activeRoom.selectedGameId === 'pentagon-clash' || path.includes('pentagon-clash')) {
     return <PentagonClashTVView />;
   }
-  if (activeRoom.selectedGameId === 'kalim-stack' || path.includes('kalim-stack')) {
-    return <KalimTVView />;
+  if (
+    activeRoom.selectedGameId === 'three-letter-word' ||
+    activeRoom.selectedGameId === 'kalim-stack' ||
+    path.includes('three-letter-word') ||
+    path.includes('kalim-stack')
+  ) {
+    return <ThreeLetterWordTVView />;
   }
   if (
     activeRoom.selectedGameId === 'conspiracy-maker' ||

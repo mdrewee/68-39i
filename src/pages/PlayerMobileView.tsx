@@ -12,7 +12,7 @@ import { BlindTourismMobileView } from './tourism/BlindTourismMobileView';
 import { ScattergoriesMobileView } from './words/scattergories/ScattergoriesMobileView';
 import { WordleRushMobileView } from './words/wordle-rush/WordleRushMobileView';
 import { PentagonClashMobileView } from './words/pentagon-clash/PentagonClashMobileView';
-import { KalimMobileView } from './words/kalim-stack/KalimMobileView';
+import { ThreeLetterWordMobileView } from './words/three-letter-word/ThreeLetterWordMobileView';
 import { WhoIsAiMobileView } from './ai/who-is-ai/WhoIsAiMobileView';
 import { AiLawyerMobileView } from './ai/ai-lawyer/AiLawyerMobileView';
 import { TheScammerMobileView } from './ai/the-scammer/TheScammerMobileView';
@@ -361,8 +361,13 @@ export const PlayerMobileView: React.FC = () => {
   if (activeRoom.selectedGameId === 'pentagon-clash' || path.includes('pentagon-clash')) {
     return <PentagonClashMobileView channel={activeChannel} roomCode={roomCode} playerId={playerId} playerName={playerName} />;
   }
-  if (activeRoom.selectedGameId === 'kalim-stack' || path.includes('kalim-stack')) {
-    return <KalimMobileView />;
+  if (
+    activeRoom.selectedGameId === 'three-letter-word' ||
+    activeRoom.selectedGameId === 'kalim-stack' ||
+    path.includes('three-letter-word') ||
+    path.includes('kalim-stack')
+  ) {
+    return <ThreeLetterWordMobileView />;
   }
   const isConspiracyMakerGame =
     activeRoom.selectedGameId === 'conspiracy-maker' ||

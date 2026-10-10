@@ -55,10 +55,10 @@ export const CATEGORIES_REGISTRY: CategoryItem[] = [
     color: '#8A9A5B',
     games: [
       {
-        id: 'kalim-stack',
-        title: 'كَلِم',
-        description: 'كلمة ثلاثية في الأرض ومعك 7 كروت.. بدّل حرف وكوّن كلمة جديدة من المعجم، وأول من يصفّر كروته يفوز!',
-        route: '/room/:code/words/kalim-stack',
+        id: 'three-letter-word',
+        title: 'كلمة ثلاثية',
+        description: 'بدّل حرف واحد من كروتك ونزله فوق الكروت بالساحة لتكوين كلمة ثلاثية صحيحة.. أول من يخلّص كروته الثمانية يفوز!',
+        route: '/room/:code/words/three-letter-word',
         icon: 'Layers',
       },
       {
