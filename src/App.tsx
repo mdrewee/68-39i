@@ -87,6 +87,26 @@ export function App() {
         <Route path="/room/:code/words/pentagon-clash-play" element={<PlayerMobileView />} />
         <Route path="/room/:code/words/pentagon-clash-tv" element={<TVScreenView />} />
 
+        {/* Eshrah Suite - Wala Kalima */}
+        <Route path="/room/:code/eshrah/wala-kalima" element={<PlayerMobileView />} />
+        <Route path="/room/:code/eshrah/wala-kalima-play" element={<PlayerMobileView />} />
+        <Route path="/room/:code/eshrah/wala-kalima-tv" element={<TVScreenView />} />
+
+        {/* Eshrah Suite - Forbidden Words */}
+        <Route path="/room/:code/eshrah/forbidden-words" element={<PlayerMobileView />} />
+        <Route path="/room/:code/eshrah/forbidden-words-play" element={<PlayerMobileView />} />
+        <Route path="/room/:code/eshrah/forbidden-words-tv" element={<TVScreenView />} />
+
+        {/* Eshrah Suite - One Word */}
+        <Route path="/room/:code/eshrah/one-word" element={<PlayerMobileView />} />
+        <Route path="/room/:code/eshrah/one-word-play" element={<PlayerMobileView />} />
+        <Route path="/room/:code/eshrah/one-word-tv" element={<TVScreenView />} />
+
+        {/* Eshrah Suite - Move The Puppet */}
+        <Route path="/room/:code/eshrah/move-the-puppet" element={<PlayerMobileView />} />
+        <Route path="/room/:code/eshrah/move-the-puppet-play" element={<PlayerMobileView />} />
+        <Route path="/room/:code/eshrah/move-the-puppet-tv" element={<TVScreenView />} />
+
         {/* Player Join & Mobile Controller View */}
         <Route path="/room/:code/join" element={<MobileJoinPage />} />
         <Route path="/room/:code/play" element={<PlayerMobileView />} />

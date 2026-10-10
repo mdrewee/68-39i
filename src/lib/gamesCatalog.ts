@@ -9,13 +9,13 @@ export interface GameModeInfo {
   maxPlayers: number;
   roundDurationMinutes: number;
   tag: string;
-  category: 'letters' | 'geography' | 'words' | 'ai';
+  category: 'letters' | 'geography' | 'words' | 'ai' | 'eshrah';
   icon: string;
   badgeColor: 'olive' | 'ochre' | 'sand';
 }
 
 export interface GameCategory {
-  id: 'letters' | 'geography' | 'words' | 'ai';
+  id: 'letters' | 'geography' | 'words' | 'ai' | 'eshrah';
   title: string;
   englishTitle: string;
   description: string;
@@ -277,6 +277,68 @@ export const GAME_CATEGORIES: GameCategory[] = [
         category: 'words',
         icon: 'Hexagon',
         badgeColor: 'olive',
+      },
+    ],
+  },
+
+  {
+    id: 'eshrah',
+    title: 'فئة اشرح',
+    englishTitle: 'Eshrah Team Suite',
+    description: 'ألعاب جماعية ومنافسة فرق؛ تمثيل صامت وشرح ممنوعات ومواجهات سريعة بجوال واحد لكل فريق',
+    tag: 'فرق وتحدي',
+    modes: [
+      {
+        id: 'wala-kalima',
+        title: 'ولا كلمة',
+        subtitle: 'تمثيل صامت وسرقة النقاط',
+        description: '5 جولات لكل فريق؛ تمثيل صامت وتحكيم مباشر بيد الفريق المنافس مع فرصة سرقة 15 ثانية!',
+        minPlayers: 2,
+        maxPlayers: 16,
+        roundDurationMinutes: 6,
+        tag: 'جديد',
+        category: 'eshrah',
+        icon: 'EyeOff',
+        badgeColor: 'olive',
+      },
+      {
+        id: 'forbidden-words',
+        title: 'كلمات محظورة',
+        subtitle: 'شرح تابو سريع وتدقيق الخصم',
+        description: '3 جولات لكل فريق؛ 60 ثانية لتخمين أكبر عدد من الكلمات بدون نطق الكلمات الممنوعة مع بازر وتدقيق الخصم!',
+        minPlayers: 2,
+        maxPlayers: 16,
+        roundDurationMinutes: 6,
+        tag: 'جديد',
+        category: 'eshrah',
+        icon: 'AlertTriangle',
+        badgeColor: 'ochre',
+      },
+      {
+        id: 'one-word',
+        title: 'كلمة واحدة',
+        subtitle: 'مواجهة وجه لوجه بنفس الكلمة',
+        description: '5 جولات؛ ممثل من كل فريق يشاهد الكلمة السرية بالتزامن وتناوب التلميحات كلمة واحدة لكل دور!',
+        minPlayers: 2,
+        maxPlayers: 16,
+        roundDurationMinutes: 5,
+        tag: 'جديد',
+        category: 'eshrah',
+        icon: 'MessageSquare',
+        badgeColor: 'olive',
+      },
+      {
+        id: 'move-the-puppet',
+        title: 'حرّك الدمية',
+        subtitle: 'توجيه صامت للأطراف بالصالة',
+        description: 'الدمية تقف في الصالة بدون جوال وفريقها يوجه أطرافها لتجسيد المشهد بدون كلام وتحكيم وسرقة للخصم!',
+        minPlayers: 2,
+        maxPlayers: 16,
+        roundDurationMinutes: 6,
+        tag: 'جديد',
+        category: 'eshrah',
+        icon: 'UserCheck',
+        badgeColor: 'ochre',
       },
     ],
   },

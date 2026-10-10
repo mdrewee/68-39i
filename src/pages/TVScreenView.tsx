@@ -38,6 +38,10 @@ import { WhoIsAiTVView } from './ai/who-is-ai/WhoIsAiTVView';
 import { AiLawyerTVView } from './ai/ai-lawyer/AiLawyerTVView';
 import { TheScammerTVView } from './ai/the-scammer/TheScammerTVView';
 import { ConspiracyTVView } from './ai/conspiracy-maker/ConspiracyTVView';
+import { WalaKalimaTVView } from './eshrah/WalaKalima/WalaKalimaTVView';
+import { ForbiddenWordsTVView } from './eshrah/ForbiddenWords/ForbiddenWordsTVView';
+import { OneWordTVView } from './eshrah/OneWord/OneWordTVView';
+import { MoveThePuppetTVView } from './eshrah/MoveThePuppet/MoveThePuppetTVView';
 import { useSafeCountdown } from '../hooks/useSafeCountdown';
 
 export const TVScreenView: React.FC = () => {
@@ -131,6 +135,30 @@ export const TVScreenView: React.FC = () => {
     path.includes('ai-room')
   ) {
     return <WhoIsAiTVView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'wala-kalima' ||
+    path.includes('wala-kalima')
+  ) {
+    return <WalaKalimaTVView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'forbidden-words' ||
+    path.includes('forbidden-words')
+  ) {
+    return <ForbiddenWordsTVView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'one-word' ||
+    path.includes('one-word')
+  ) {
+    return <OneWordTVView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'move-the-puppet' ||
+    path.includes('move-the-puppet')
+  ) {
+    return <MoveThePuppetTVView />;
   }
 
   return <ClassicTVScreenView roomId={roomId} />;

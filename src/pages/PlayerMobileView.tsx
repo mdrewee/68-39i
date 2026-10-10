@@ -17,6 +17,10 @@ import { WhoIsAiMobileView } from './ai/who-is-ai/WhoIsAiMobileView';
 import { AiLawyerMobileView } from './ai/ai-lawyer/AiLawyerMobileView';
 import { TheScammerMobileView } from './ai/the-scammer/TheScammerMobileView';
 import { ConspiracyMobileView } from './ai/conspiracy-maker/ConspiracyMobileView';
+import { WalaKalimaMobileView } from './eshrah/WalaKalima/WalaKalimaMobileView';
+import { ForbiddenWordsMobileView } from './eshrah/ForbiddenWords/ForbiddenWordsMobileView';
+import { OneWordMobileView } from './eshrah/OneWord/OneWordMobileView';
+import { MoveThePuppetMobileView } from './eshrah/MoveThePuppet/MoveThePuppetMobileView';
 import { MobileTopBar } from '../components/MobileTopBar';
 import { getOrCreatePlayerId, getOrCreatePlayerName, clearPlayerSession } from '../utils/playerSession';
 import { useSafeCountdown } from '../hooks/useSafeCountdown';
@@ -406,6 +410,31 @@ export const PlayerMobileView: React.FC = () => {
 
   if (isWhoIsAiGame) {
     return <WhoIsAiMobileView channel={activeChannel} roomCode={roomCode} playerId={playerId} playerName={playerName} onLeaveRoom={() => navigate('/')} />;
+  }
+
+  if (
+    activeRoom.selectedGameId === 'wala-kalima' ||
+    path.includes('wala-kalima')
+  ) {
+    return <WalaKalimaMobileView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'forbidden-words' ||
+    path.includes('forbidden-words')
+  ) {
+    return <ForbiddenWordsMobileView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'one-word' ||
+    path.includes('one-word')
+  ) {
+    return <OneWordMobileView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'move-the-puppet' ||
+    path.includes('move-the-puppet')
+  ) {
+    return <MoveThePuppetMobileView />;
   }
 
   // Fallbacks based on active states if selectedGameId is not explicitly set

@@ -121,4 +121,41 @@ export const CATEGORIES_REGISTRY: CategoryItem[] = [
       },
     ],
   },
+  {
+    id: 'eshrah',
+    title: 'اشرح',
+    description: 'ألعاب فرق وتحديات تمثيل وتخمين وسرعة بالصالة بدون تعقيد',
+    icon: 'MessageSquare',
+    color: '#8A9A5B',
+    games: [
+      {
+        id: 'wala-kalima',
+        title: 'ولا كلمة',
+        description: 'تمثيل صامت ونظام سرقة وتحكيم مباشر من الفريق المنافس',
+        route: '/room/:code/eshrah/wala-kalima',
+        icon: 'EyeOff',
+      },
+      {
+        id: 'forbidden-words',
+        title: 'كلمات محظورة',
+        description: 'شرح سريع بدون نطق الكلمات الممنوعة مع تدقيق ورصد فوري من الخصم',
+        route: '/room/:code/eshrah/forbidden-words',
+        icon: 'AlertTriangle',
+      },
+      {
+        id: 'one-word',
+        title: 'كلمة واحدة',
+        description: 'مواجهة وجه لوجه بنفس الكلمة؛ كلمة واحدة كتلميح لكل دور',
+        route: '/room/:code/eshrah/one-word',
+        icon: 'MessageSquare',
+      },
+      {
+        id: 'move-the-puppet',
+        title: 'حرّك الدمية',
+        description: 'الدمية تقف بالصالة وفريقها يوجه أطرافها صامتاً لتجسيد المشهد',
+        route: '/room/:code/eshrah/move-the-puppet',
+        icon: 'UserCheck',
+      },
+    ],
+  },
 ];

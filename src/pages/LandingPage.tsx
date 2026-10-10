@@ -15,6 +15,7 @@ import {
   Globe2,
   BookOpen,
   Bot,
+  MessageSquare,
 } from 'lucide-react';
 import { Header } from '../components/common/Header';
 import { GAME_CATEGORIES, GameModeInfo } from '../lib/gamesCatalog';
@@ -202,7 +203,7 @@ export const LandingPage: React.FC = () => {
                 <div className="flex items-center justify-between border-b-2 border-ink-950 pb-3">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-tactile bg-olive-100 border-2 border-ink-950 shadow-tactile-sm flex items-center justify-center font-bold text-sm text-olive-800">
-                      {category.id === 'letters' ? 'أ' : category.id === 'words' ? <BookOpen className="w-5 h-5" /> : category.id === 'ai' ? <Bot className="w-5 h-5" /> : <Globe2 className="w-5 h-5" />}
+                      {category.id === 'letters' ? 'أ' : category.id === 'words' ? <BookOpen className="w-5 h-5" /> : category.id === 'ai' ? <Bot className="w-5 h-5" /> : category.id === 'eshrah' ? <MessageSquare className="w-5 h-5" /> : <Globe2 className="w-5 h-5" />}
                     </div>
                     <div>
                       <h3 className="text-xl md:text-2xl font-black text-ink-950 font-display">
