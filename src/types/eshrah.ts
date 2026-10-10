@@ -13,15 +13,15 @@ export type EshrahCategory =
   | 'movies'        // أفلام
   | 'proverbs'      // حكمة ومثل
   | 'theater'       // مسرحية
-  | 'tools'         // أدوات وأشياء
+  | 'tools'         // أدوات
   | 'food'          // أكلات
   | 'countries';    // دول
 
 export interface EshrahPromptItem {
   id: string;
   category: EshrahCategory;
-  text: string;                  // The main word / sentence / title
-  forbiddenWords?: string[];     // 3-4 forbidden words for "كلمات محظورة"
+  text: string;
+  forbiddenWords: string[];
   difficulty?: 'easy' | 'medium' | 'hard';
 }
 
