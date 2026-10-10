@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { Play, ArrowRight, UserCheck, Clock, Award, Layers, AlertCircle, X } from 'lucide-react';
+import { Play, Clock, X, Trophy } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { ThreeLetterTopBar } from './components/ThreeLetterTopBar';
@@ -135,7 +135,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
     };
   }, [roomCode]);
 
-  // Handle Player's Single Attempt Move
+  // Handle Player's Single Attempt Move (Instant Win on 0 Cards)
   const handlePlayerAttempt = (payload: { playerId: string; slotIndex: 0 | 1 | 2; card: ThreeLetterCardItem }) => {
     const { playerId, slotIndex, card } = payload;
     const currentActive = playersRef.current[activeIndexRef.current];
@@ -145,7 +145,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
     const validation = validateWordPlacement(boardRef.current, slotIndex, card.letter);
 
     if (validation.isValid) {
-      // Valid Word Played!
+      // Valid Word Move
       sound.playCorrect();
 
       const oldSlot = boardRef.current[slotIndex];
@@ -180,12 +180,25 @@ export const ThreeLetterWordTVView: React.FC = () => {
       };
       setLastNotification(notif);
 
-      // Sudden Death Victory Check: 0 cards
+      // CRITICAL: Instant Win on 0 Cards
       if (playerAfterMove && playerAfterMove.cardsCount === 0) {
         sound.playVictory();
         setWinner(playerAfterMove);
         setPhase('ROUND_WIN');
         setPlayers(updatedPlayers);
+
+        // Broadcast match win across realtime channel
+        if (channelRef.current) {
+          channelRef.current.send({
+            type: 'broadcast',
+            event: 'MATCH_WIN',
+            payload: {
+              winnerId: playerAfterMove.id,
+              winnerName: playerAfterMove.name,
+              players: updatedPlayers
+            }
+          });
+        }
         broadcastSync('ROUND_WIN', newBoard, updatedPlayers, activeIndexRef.current, turnNumberRef.current, notif);
         return;
       }
@@ -412,6 +425,19 @@ export const ThreeLetterWordTVView: React.FC = () => {
     setPhase('LOBBY');
   };
 
+  const handleEndRoom = () => {
+    sound.playClick();
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'ROOM_TERMINATED',
+        payload: {}
+      });
+    }
+    sessionStorage.clear();
+    navigate('/');
+  };
+
   const activePlayer = players[activePlayerIndex];
   const timerPercentage = (turnTimeLeft / maxTurnTime) * 100;
 
@@ -426,12 +452,13 @@ export const ThreeLetterWordTVView: React.FC = () => {
         }}
       />
 
-      {/* Top Bar (No red buttons, Ochre only) */}
+      {/* Top Bar (Always visible exit/end button in Ochre) */}
       <div className="relative z-20">
         <ThreeLetterTopBar
           roomCode={roomCode}
           phase={phase}
           onTerminate={handleTerminateGame}
+          onEndRoom={handleEndRoom}
         />
       </div>
 
@@ -466,7 +493,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Box 2: Players Ring / Ready Status */}
+              {/* Box 2: Players List */}
               <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-5 flex flex-col justify-between">
                 <div>
                   <div className="flex justify-between items-center mb-3">
@@ -541,7 +568,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
               {/* Box 3: Game Rules Guide */}
               <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-5 flex flex-col text-right">
                 <span className="text-sm font-black text-[#2C2A29] mb-3">طريقة لعب كلمة ثلاثية:</span>
-                <ul className="space-y-2 text-xs font-bold text-[#5C4033] leading-relaxed">
+                <ul className="space-y-2.5 text-xs font-bold text-[#5C4033] leading-relaxed">
                   <li className="flex items-start gap-2">
                     <span className="text-[#8A9A5B] font-black">1.</span>
                     <span>كلمة ثلاثية بالساحة ومع كل لاعب 8 كروت ملونة.</span>
@@ -552,14 +579,10 @@ export const ThreeLetterWordTVView: React.FC = () => {
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-[#8A9A5B] font-black">3.</span>
-                    <span>لك محاولة واحدة فقط؛ إذا الكلمة خطأ ينتهي دورك وتسحب كرت عقوبة!</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-[#8A9A5B] font-black">4.</span>
                     <span>الكلمات المقبولة: أسماء وأفعال فقط (ممنوع الحروف وأدوات الاستفهام).</span>
                   </li>
                   <li className="flex items-start gap-2">
-                    <span className="text-[#8A9A5B] font-black">5.</span>
+                    <span className="text-[#8A9A5B] font-black">4.</span>
                     <span>أول لاعب يخلّص كروته الثمانية يفوز باللعبة فوراً وبدون نقاط.</span>
                   </li>
                 </ul>
@@ -615,7 +638,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
                   <span>✓ {lastNotification.playerName} بدّل حرف ({lastNotification.prevLetter} ← {lastNotification.newLetter}) وكوّن كلمة ({lastNotification.resultingWord})</span>
                 )}
                 {lastNotification.type === 'INVALID_PENALTY' && (
-                  <span>✗ {lastNotification.playerName} حاول بكلمة ({lastNotification.resultingWord}) غير مقبولة وتسحب كرت عقوبة!</span>
+                  <span>✗ {lastNotification.playerName} حاول بكلمة ({lastNotification.resultingWord}) وسحب كرت عقوبة!</span>
                 )}
                 {lastNotification.type === 'DRAW_PASS' && (
                   <span>↻ {lastNotification.playerName} سحب كرتاً وتخطى دوره</span>
@@ -626,13 +649,13 @@ export const ThreeLetterWordTVView: React.FC = () => {
               </div>
             )}
 
-            {/* Centered Clean Arena (STRICTLY the 3 physical stacked cards - Zero redundant text labels) */}
-            <div className="flex justify-center items-center gap-6 md:gap-12 py-4">
+            {/* Centered Clean Arena (STRICTLY the 3 physical cards - ZERO sub-labels) */}
+            <div className="flex justify-center items-center gap-6 md:gap-14 py-4">
               {board.map((slot, idx) => (
                 <div key={idx} className="transition-transform duration-200">
                   <ThreeLetterBoardSlot
                     slot={slot}
-                    size="xl"
+                    size="tv"
                   />
                 </div>
               ))}
@@ -679,7 +702,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
           </div>
         )}
 
-        {/* ================= 3. ROUND WIN / PODIUM PHASE ================= */}
+        {/* ================= 3. INSTANT WIN / PODIUM PHASE ================= */}
         {(phase === 'ROUND_WIN' || phase === 'PODIUM') && (
           <div className="w-full flex-1 flex flex-col items-center justify-center text-center gap-6 my-auto max-w-xl">
             <div className="w-24 h-24 rounded-3xl bg-[#8A9A5B] border-2 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] flex items-center justify-center text-white text-5xl">
@@ -688,19 +711,19 @@ export const ThreeLetterWordTVView: React.FC = () => {
 
             <div>
               <span className="text-xs font-black text-[#5C4033] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
-                نهاية المباراة
+                حسم المباراة
               </span>
               <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29] mt-3">
                 {winner?.name} بطل الكلمة الثلاثية!
               </h2>
               <p className="text-sm md:text-base font-bold text-[#8A9A5B] mt-2">
-                تخلّص من جميع كروته بنجاح وأنهى المباراة!
+                تخلّص من جميع كروته بنجاح وحسم المباراة!
               </p>
             </div>
 
-            {/* Final Standings (Ordered by remaining cards - No points!) */}
+            {/* Standings */}
             <div className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-5 shadow-[4px_4px_0px_#2C2A29]">
-              <span className="text-xs font-black text-[#5C4033] block mb-3 text-right">الترتيب النهائي للكروت:</span>
+              <span className="text-xs font-black text-[#5C4033] block mb-3 text-right">الترتيب النهائي:</span>
               <div className="space-y-2">
                 {players
                   .slice()
@@ -719,7 +742,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
                         <span className="font-black text-sm md:text-base">{p.name}</span>
                       </div>
                       <span className="text-xs md:text-sm font-bold">
-                        {p.cardsCount === 0 ? 'الفائز باللقب' : `${p.cardsCount} كروت متبقية`}
+                        {p.cardsCount === 0 ? 'بطل اللعبة' : `${p.cardsCount} كروت متبقية`}
                       </span>
                     </div>
                   ))}

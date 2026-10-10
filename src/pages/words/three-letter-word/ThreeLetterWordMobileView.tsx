@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Layers, AlertCircle, Clock, Check, Trophy } from 'lucide-react';
+import { Layers, AlertCircle, Trophy } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { MobileTopBar } from '../../../components/MobileTopBar';
@@ -16,8 +16,7 @@ import {
 import {
   generateInitialBoard,
   generateInitialHand,
-  validateWordPlacement,
-  getRandomCardColor
+  validateWordPlacement
 } from './utils/threeLetterDictionary';
 import { getOrCreatePlayerId, getOrCreatePlayerName } from '../../../utils/playerSession';
 import { sound } from '../../../lib/audio';
@@ -110,6 +109,14 @@ export const ThreeLetterWordMobileView: React.FC = () => {
           if (w) setWinner({ id: w.id, name: w.name });
         }
       })
+      .on('broadcast', { event: 'MATCH_WIN' }, ({ payload }) => {
+        if (payload) {
+          setPhase('ROUND_WIN');
+          setWinner({ id: payload.winnerId, name: payload.winnerName });
+          if (payload.players) setPlayers(payload.players);
+          sound.playVictory();
+        }
+      })
       .on('broadcast', { event: 'GAME_STARTED' }, ({ payload }) => {
         setPhase('GAMEPLAY');
         if (payload?.board) setBoard(payload.board);
@@ -131,6 +138,10 @@ export const ThreeLetterWordMobileView: React.FC = () => {
       })
       .on('broadcast', { event: 'GAME_TERMINATED' }, () => {
         navigate(`/room/${roomCode}/lobby`);
+      })
+      .on('broadcast', { event: 'ROOM_TERMINATED' }, () => {
+        sessionStorage.clear();
+        navigate('/');
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
@@ -194,7 +205,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
     }
 
     if (!selectedCardId) {
-      setErrorMessage('اختر كرتاً من يدك أولاً ثم اضغط على المكان المطلوب!');
+      setErrorMessage('اختر كرتاً من يدك أولاً ثم انقر على الكرت المطلوب في الساحة!');
       sound.playIncorrect();
       return;
     }
@@ -202,13 +213,13 @@ export const ThreeLetterWordMobileView: React.FC = () => {
     const cardToPlay = hand.find((c) => c.id === selectedCardId);
     if (!cardToPlay) return;
 
-    // Lock input immediately (Strict Single Attempt Rule)
+    // Lock input immediately
     setIsEvaluatingMove(true);
 
     const validation = validateWordPlacement(board, slotIndex, cardToPlay.letter);
 
     if (validation.isValid) {
-      // Valid word move
+      // Valid move
       sound.playCorrect();
       setErrorMessage(null);
 
@@ -216,6 +227,13 @@ export const ThreeLetterWordMobileView: React.FC = () => {
       const nextHand = hand.filter((c) => c.id !== selectedCardId);
       setHand(nextHand);
       setSelectedCardId(null);
+
+      // CRITICAL: Instant Win on 0 Cards
+      if (nextHand.length === 0) {
+        sound.playVictory();
+        setPhase('ROUND_WIN');
+        setWinner({ id: playerId, name: playerName });
+      }
 
       // 2. Broadcast attempt
       if (channelRef.current) {
@@ -232,7 +250,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
     } else {
       // Invalid word move -> draw 1 penalty card, single shot failed, turn ends!
       sound.playIncorrect();
-      setErrorMessage(validation.errorMessage || 'الكلمة غير صحيحة! تم احتساب كرت عقوبة وانتهاء دورك.');
+      setErrorMessage(validation.errorMessage || 'الكلمة غير صحيحة! تم احتساب كرت عقوبة وانتهى دورك.');
 
       // Add penalty card to local hand
       const penaltyCard = generateInitialHand(1)[0];
@@ -310,7 +328,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
         }}
       />
 
-      {/* Top Bar (No points displayed) */}
+      {/* Top Bar (Always shows Ochre exit button in LOBBY and all phases) */}
       <div className="relative z-20">
         <MobileTopBar
           roomCode={roomCode}
@@ -323,7 +341,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
         />
       </div>
 
-      <main className="flex-1 flex flex-col w-full mx-auto p-2 relative z-10 justify-between pb-4">
+      <main className="flex-1 flex flex-col w-full mx-auto p-2 relative z-10 justify-between pb-3">
         {/* ================= 1. LOBBY PHASE ================= */}
         {phase === 'LOBBY' && (
           <div className="flex-1 flex flex-col items-center justify-center text-center gap-5 my-auto max-w-sm mx-auto w-full px-3">
@@ -371,8 +389,8 @@ export const ThreeLetterWordMobileView: React.FC = () => {
 
         {/* ================= 2. GAMEPLAY PHASE ================= */}
         {phase === 'GAMEPLAY' && (
-          <div className="flex-1 flex flex-col justify-between gap-2.5 w-full">
-            {/* Center Section: Active Turn Header & Timer Ticker */}
+          <div className="flex-1 flex flex-col justify-between gap-2 w-full">
+            {/* Active Turn Header & Dynamic Ticker */}
             <div
               className={`w-full p-2.5 rounded-2xl border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] text-center transition-all ${
                 isMyTurn
@@ -382,7 +400,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
             >
               {isMyTurn ? (
                 <div className="flex items-center justify-center gap-2">
-                  <span className="text-sm md:text-base">🎯 دورك الآن! اسحب كرتك أو انقر لتغيير حرف بالساحة</span>
+                  <span className="text-sm md:text-base">🎯 دورك الآن! اختر كرت ثم انقر على الكرت بالساحة لتغييره</span>
                 </div>
               ) : (
                 <div className="text-xs text-[#5C4033]">
@@ -399,7 +417,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
               </div>
             )}
 
-            {/* Top Section: Board Target Slots */}
+            {/* Top Section: Board Target Slots (CLEAN - Zero sublabels) */}
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-2.5 shadow-[4px_4px_0px_#2C2A29] w-full">
               <div className="flex justify-between items-center mb-1.5 px-2">
                 <span className="text-xs font-black text-[#5C4033]">ساحة الكلمة الثلاثية:</span>
@@ -408,21 +426,18 @@ export const ThreeLetterWordMobileView: React.FC = () => {
                 </span>
               </div>
 
-              {/* 3 Active Physical Slots */}
+              {/* 3 Active Physical Slots (Completely Clean) */}
               <div className="flex justify-center items-center gap-3 sm:gap-6 my-1">
                 {board.map((slot, idx) => {
                   const pos = idx as 0 | 1 | 2;
-                  const label = pos === 0 ? 'الأول' : pos === 1 ? 'الأوسط' : 'الأخير';
-
                   return (
-                    <div key={idx} className="flex flex-col items-center gap-1">
+                    <div key={idx} className="flex flex-col items-center">
                       <ThreeLetterBoardSlot
                         slot={slot}
-                        size="md"
+                        size="board"
                         isTargetable={isMyTurn && !!selectedCardId}
                         onSlotClick={() => handlePlaceCardOnSlot(pos)}
                         onDropCard={handleDropOnSlot}
-                        slotLabel={label}
                       />
                     </div>
                   );
@@ -431,25 +446,25 @@ export const ThreeLetterWordMobileView: React.FC = () => {
 
               {selectedCard && (
                 <div className="text-center text-[11px] font-black text-[#5C4033] mt-1 pt-1 border-t border-[#2C2A29]/15">
-                  اضغط على أي موقع بالأعلى لاستبداله بـ <span className="text-[#8A9A5B] text-sm">({selectedCard.letter})</span>
+                  انقر على أي كرت بالأعلى لاستبداله بـ <span className="text-[#8A9A5B] text-sm">({selectedCard.letter})</span>
                 </div>
               )}
             </div>
 
-            {/* Bottom Section: Edge-to-Edge 8-Card Hand (Full Screen Width) */}
-            <div className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-2.5 shadow-[4px_4px_0px_#2C2A29]">
-              <div className="flex justify-between items-center mb-1.5 px-1">
+            {/* Bottom Section: Edge-to-Edge Massive Cards (WITHOUT CONTAINER BOX) */}
+            <div className="w-full flex flex-col items-center my-auto py-1">
+              <div className="w-full flex justify-between items-center mb-1 px-2">
                 <span className="text-xs font-black text-[#2C2A29]">كروتك في اليد ({hand.length}):</span>
-                <span className="text-[10px] font-bold text-[#5C4033]">لك محاولة واحدة فقط في الدور</span>
+                <span className="text-[10px] font-bold text-[#5C4033]">المتبقي للتصفير: {hand.length}</span>
               </div>
 
-              {/* Row 1 (Edge to Edge, cascading overlap) */}
-              <div className="flex justify-center items-center -space-x-5 space-x-reverse py-1 w-full overflow-x-auto px-1">
+              {/* Row 1 (Edge to Edge, Large Cascading Cards) */}
+              <div className="flex justify-center items-center -space-x-4 space-x-reverse py-1 w-full overflow-x-visible px-1">
                 {handRow1.map((card) => (
                   <div key={card.id} className="shrink-0 transition-transform duration-150">
                     <ThreeLetterCard
                       card={card}
-                      size="sm"
+                      size="mobile"
                       isSelected={selectedCardId === card.id}
                       isHoverable={isMyTurn}
                       onClick={() => handleSelectCard(card.id)}
@@ -459,14 +474,14 @@ export const ThreeLetterWordMobileView: React.FC = () => {
                 ))}
               </div>
 
-              {/* Row 2 (if cards exceed 4) */}
+              {/* Row 2 (if cards exist) */}
               {handRow2.length > 0 && (
-                <div className="flex justify-center items-center -space-x-5 space-x-reverse py-1 mt-1 w-full overflow-x-auto px-1">
+                <div className="flex justify-center items-center -space-x-4 space-x-reverse py-1 mt-1 w-full overflow-x-visible px-1">
                   {handRow2.map((card) => (
                     <div key={card.id} className="shrink-0 transition-transform duration-150">
                       <ThreeLetterCard
                         card={card}
-                        size="sm"
+                        size="mobile"
                         isSelected={selectedCardId === card.id}
                         isHoverable={isMyTurn}
                         onClick={() => handleSelectCard(card.id)}
@@ -496,7 +511,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
           </div>
         )}
 
-        {/* ================= 3. ROUND WIN / PODIUM PHASE ================= */}
+        {/* ================= 3. INSTANT WIN / PODIUM PHASE ================= */}
         {(phase === 'ROUND_WIN' || phase === 'PODIUM') && (
           <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 my-auto max-w-sm mx-auto w-full px-3">
             <div className="w-20 h-20 rounded-3xl bg-[#8A9A5B] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] flex items-center justify-center text-white">
@@ -511,7 +526,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
                 {winner?.id === playerId ? 'مبروك! أنت بطل الكلمة الثلاثية!' : `الفائز: ${winner?.name || 'لاعب'}`}
               </h2>
               <p className="text-sm font-bold text-[#8A9A5B] mt-1">
-                {winner?.id === playerId ? 'تخلصت من جميع كروتك الثمانية بنجاح!' : 'تم تصفير الكروت بنجاح!'}
+                {winner?.id === playerId ? 'تخلصت من جميع كروتك الثمانية بنجاح!' : 'تم حسم الفوز وتصفير الكروت!'}
               </p>
             </div>
 

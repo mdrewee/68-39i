@@ -6,12 +6,14 @@ interface ThreeLetterTopBarProps {
   roomCode: string;
   phase: string;
   onTerminate?: () => void;
+  onEndRoom?: () => void;
 }
 
 export const ThreeLetterTopBar: React.FC<ThreeLetterTopBarProps> = ({
   roomCode,
   phase,
-  onTerminate
+  onTerminate,
+  onEndRoom
 }) => {
   const [copied, setCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -36,6 +38,25 @@ export const ThreeLetterTopBar: React.FC<ThreeLetterTopBarProps> = ({
       if (document.exitFullscreen) {
         document.exitFullscreen().catch(() => {});
         setIsFullscreen(false);
+      }
+    }
+  };
+
+  const handleExitClick = () => {
+    sound.playClick();
+    if (phase === 'LOBBY') {
+      if (onEndRoom) {
+        onEndRoom();
+      } else {
+        window.location.href = '/';
+      }
+    } else {
+      if (onTerminate) {
+        onTerminate();
+      } else if (onEndRoom) {
+        onEndRoom();
+      } else {
+        window.location.href = '/';
       }
     }
   };
@@ -73,16 +94,14 @@ export const ThreeLetterTopBar: React.FC<ThreeLetterTopBarProps> = ({
           {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>
 
-        {/* Terminate Game Button (Strictly Ochre Orange #C68B59, hidden in LOBBY) */}
-        {phase !== 'LOBBY' && onTerminate && (
-          <button
-            onClick={onTerminate}
-            className="flex items-center gap-1.5 bg-[#C68B59] text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-3.5 py-1.5 rounded-xl font-bold text-xs md:text-sm hover:bg-[#2C2A29] transition-colors cursor-pointer"
-          >
-            <LogOut size={15} />
-            <span>العودة للوبي</span>
-          </button>
-        )}
+        {/* Exit / End Game Button: ALWAYS visible across all phases in Ochre Orange #C68B59 */}
+        <button
+          onClick={handleExitClick}
+          className="flex items-center gap-1.5 bg-[#C68B59] text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-3.5 py-1.5 rounded-xl font-bold text-xs md:text-sm hover:bg-[#2C2A29] transition-colors cursor-pointer"
+        >
+          <LogOut size={15} />
+          <span>{phase === 'LOBBY' ? 'إنهاء الغرفة' : 'العودة للوبي'}</span>
+        </button>
       </div>
     </header>
   );
