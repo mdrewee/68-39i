@@ -34,8 +34,9 @@ export interface EshrahTeamState {
 }
 
 export type EshrahGamePhase =
-  | 'TEAMS'          // Team selection screen
-  | 'CATEGORIES'     // Host multi-select categories
+  | 'TEAMS'          // Team selection screen (Lobby)
+  | 'CATEGORIES'     // Host multi-select categories (optional)
+  | 'PREP_WORD'      // Pre-turn word preview where explainer sees word and taps [جاهز]
   | 'ROUND_READY'    // Ready screen before round starts
   | 'PLAYING'        // Active timer / gameplay
   | 'STEAL_WINDOW'   // Steal chance window for opponent team

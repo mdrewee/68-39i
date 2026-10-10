@@ -4,17 +4,14 @@ import { Clock, Trophy, Play, CheckCircle2, AlertTriangle, ShieldCheck, UserChec
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { EshrahTopBar } from '../../../components/eshrah/EshrahTopBar';
-import { CleanTeamSelection } from '../../../components/eshrah/CleanTeamSelection';
-import { CategoryPicker } from '../../../components/eshrah/CategoryPicker';
+import { EshrahTVLobby } from '../../../components/eshrah/EshrahTVLobby';
 import { EshrahPodium } from '../../../components/eshrah/EshrahPodium';
 import {
   EshrahPlayer,
   EshrahTeamId,
-  EshrahCategory,
-  EshrahPromptItem,
   EshrahGamePhase
 } from '../../../types/eshrah';
-import { getRandomPrompt, ESHRAH_CATEGORIES_CONFIG } from '../../../data/eshrahWordsBank';
+import { PuppetActionItem, getRandomPuppetAction } from '../../../data/puppetActionsBank';
 import { sound } from '../../../lib/audio';
 
 export const MoveThePuppetTVView: React.FC = () => {
@@ -25,19 +22,15 @@ export const MoveThePuppetTVView: React.FC = () => {
   // State
   const [phase, setPhase] = useState<EshrahGamePhase>('TEAMS');
   const [players, setPlayers] = useState<EshrahPlayer[]>([]);
-  const [selectedCategories, setSelectedCategories] = useState<EshrahCategory[]>([
-    'tools', 'food', 'proverbs', 'movies'
-  ]);
   const [activeTeam, setActiveTeam] = useState<EshrahTeamId>('team_1');
   const [currentRound, setCurrentRound] = useState<number>(1); // 1 to 5 per team
   const [team1Score, setTeam1Score] = useState<number>(0);
   const [team2Score, setTeam2Score] = useState<number>(0);
-  const [currentPrompt, setCurrentPrompt] = useState<EshrahPromptItem | null>(null);
-  const [usedPromptIds, setUsedPromptIds] = useState<Set<string>>(new Set());
+  const [currentAction, setCurrentAction] = useState<PuppetActionItem | null>(null);
+  const [usedActionIds, setUsedActionIds] = useState<Set<string>>(new Set());
   const [timeLeft, setTimeLeft] = useState<number>(60);
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
   const [stealTimeLeft, setStealTimeLeft] = useState<number>(15);
-  const [roundResultText, setRoundResultText] = useState<string>('');
   const [isPromptRevealedOnTV, setIsPromptRevealedOnTV] = useState<boolean>(false);
 
   // Channel ref singleton
@@ -47,7 +40,7 @@ export const MoveThePuppetTVView: React.FC = () => {
   const activeTeamRef = useRef(activeTeam);
   const team1ScoreRef = useRef(team1Score);
   const team2ScoreRef = useRef(team2Score);
-  const currentPromptRef = useRef(currentPrompt);
+  const currentActionRef = useRef(currentAction);
   const currentRoundRef = useRef(currentRound);
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
@@ -55,7 +48,7 @@ export const MoveThePuppetTVView: React.FC = () => {
   useEffect(() => { activeTeamRef.current = activeTeam; }, [activeTeam]);
   useEffect(() => { team1ScoreRef.current = team1Score; }, [team1Score]);
   useEffect(() => { team2ScoreRef.current = team2Score; }, [team2Score]);
-  useEffect(() => { currentPromptRef.current = currentPrompt; }, [currentPrompt]);
+  useEffect(() => { currentActionRef.current = currentAction; }, [currentAction]);
   useEffect(() => { currentRoundRef.current = currentRound; }, [currentRound]);
 
   // Broadcast Full State
@@ -71,7 +64,7 @@ export const MoveThePuppetTVView: React.FC = () => {
         team1Score: team1ScoreRef.current,
         team2Score: team2ScoreRef.current,
         currentRound: currentRoundRef.current,
-        prompt: currentPromptRef.current,
+        action: currentActionRef.current,
         timeLeft,
         stealTimeLeft,
         ...customPayload
@@ -118,8 +111,14 @@ export const MoveThePuppetTVView: React.FC = () => {
           prev.map((p) => (p.id === playerId ? { ...p, teamId } : p))
         );
       })
+      .on('broadcast', { event: 'EXPLAINER_READY_START' }, () => {
+        handleStartDirecting();
+      })
       .on('broadcast', { event: 'REFEREE_ACTION' }, ({ payload }) => {
         handleRefereeAction(payload);
+      })
+      .on('broadcast', { event: 'ROOM_TERMINATED' }, () => {
+        navigate('/');
       })
       .subscribe();
 
@@ -127,7 +126,7 @@ export const MoveThePuppetTVView: React.FC = () => {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [roomCode, broadcastSync]);
+  }, [roomCode, broadcastSync, navigate]);
 
   // Main 60s Timer Loop
   useEffect(() => {
@@ -169,7 +168,16 @@ export const MoveThePuppetTVView: React.FC = () => {
     return () => clearInterval(interval);
   }, [phase]);
 
-  // Handle Main Timer Expiration
+  // Directing Team clicks [جاهز - ابدأ الوقت] on mobile
+  const handleStartDirecting = () => {
+    sound.playRoundStart();
+    setTimeLeft(60);
+    setIsTimerRunning(true);
+    setPhase('PLAYING');
+    broadcastSync({ phase: 'PLAYING', timeLeft: 60 });
+  };
+
+  // Main Timer Expiration -> Open 15s Steal Window
   const handleMainTimerExpired = () => {
     sound.playTimeout();
     setIsTimerRunning(false);
@@ -178,15 +186,13 @@ export const MoveThePuppetTVView: React.FC = () => {
     broadcastSync({ phase: 'STEAL_WINDOW', stealTimeLeft: 15 });
   };
 
-  // Handle Steal Expiration
+  // Steal Expired -> Instant transition to next turn
   const handleStealExpired = () => {
     sound.playTimeout();
-    setRoundResultText('انتهت فرصة السرقة ولم يُحرز أي فريق نقطة (0 pt)');
-    setPhase('ROUND_RESULT');
-    broadcastSync({ phase: 'ROUND_RESULT', roundResultText: 'انتهت فرصة السرقة (0 pt)' });
+    handleAdvanceNextTurn();
   };
 
-  // Handle Referee Button Actions from Opponent Phone
+  // Referee Action (Correct / Steal / Fail) -> Instant Round Progression!
   const handleRefereeAction = (payload: { action: 'CORRECT' | 'STEAL_SUCCESS' | 'STEAL_FAIL' }) => {
     const { action } = payload;
     const opponentTeam: EshrahTeamId = activeTeamRef.current === 'team_1' ? 'team_2' : 'team_1';
@@ -201,10 +207,8 @@ export const MoveThePuppetTVView: React.FC = () => {
         setTeam2Score((prev) => prev + 1);
         team2ScoreRef.current += 1;
       }
-      const txt = `إجابة صحيحة! أحرز ${activeTeamRef.current === 'team_1' ? 'فريق 1' : 'فريق 2'} نقطة (+1 pt)`;
-      setRoundResultText(txt);
-      setPhase('ROUND_RESULT');
-      broadcastSync({ phase: 'ROUND_RESULT', roundResultText: txt });
+      // Instant transition!
+      handleAdvanceNextTurn();
     } else if (action === 'STEAL_SUCCESS') {
       sound.playVictory();
       if (opponentTeam === 'team_1') {
@@ -214,92 +218,99 @@ export const MoveThePuppetTVView: React.FC = () => {
         setTeam2Score((prev) => prev + 1);
         team2ScoreRef.current += 1;
       }
-      const txt = `سرقة ناجحة! أحرز ${opponentTeam === 'team_1' ? 'فريق 1' : 'فريق 2'} نقطة (+1 pt)`;
-      setRoundResultText(txt);
-      setPhase('ROUND_RESULT');
-      broadcastSync({ phase: 'ROUND_RESULT', roundResultText: txt });
+      // Instant transition!
+      handleAdvanceNextTurn();
     } else if (action === 'STEAL_FAIL') {
       sound.playIncorrect();
-      const txt = 'فشلت السرقة، لا توجد نقاط لهذه الجولة (0 pt)';
-      setRoundResultText(txt);
-      setPhase('ROUND_RESULT');
-      broadcastSync({ phase: 'ROUND_RESULT', roundResultText: txt });
+      // Instant transition!
+      handleAdvanceNextTurn();
     }
   };
 
-  // Advance Turn (5 rounds per team = 10 turns total)
+  // Advance Next Turn (5 rounds per team = 10 turns total)
   const handleAdvanceNextTurn = () => {
-    sound.playClick();
-    const nextTeam: EshrahTeamId = activeTeam === 'team_1' ? 'team_2' : 'team_1';
-    let nextRound = currentRound;
+    const nextTeam: EshrahTeamId = activeTeamRef.current === 'team_1' ? 'team_2' : 'team_1';
+    let nextRound = currentRoundRef.current;
 
-    if (activeTeam === 'team_2') {
+    if (activeTeamRef.current === 'team_2') {
       nextRound += 1;
     }
 
     if (nextRound > 5) {
       sound.playVictory();
       setPhase('PODIUM');
-      broadcastSync({ phase: 'PODIUM' });
+      broadcastSync({
+        phase: 'PODIUM',
+        team1Score: team1ScoreRef.current,
+        team2Score: team2ScoreRef.current
+      });
       return;
     }
 
-    const nextPrompt = getRandomPrompt(selectedCategories, usedPromptIds);
-    setUsedPromptIds((prev) => new Set([...prev, nextPrompt.id]));
-    setCurrentPrompt(nextPrompt);
+    const nextAct = getRandomPuppetAction(usedActionIds);
+    setUsedActionIds((prev) => new Set([...prev, nextAct.id]));
+    setCurrentAction(nextAct);
+    currentActionRef.current = nextAct;
     setActiveTeam(nextTeam);
+    activeTeamRef.current = nextTeam;
     setCurrentRound(nextRound);
+    currentRoundRef.current = nextRound;
     setTimeLeft(60);
     setIsTimerRunning(false);
     setIsPromptRevealedOnTV(false);
-    setPhase('ROUND_READY');
+    setPhase('PREP_WORD');
 
     broadcastSync({
-      phase: 'ROUND_READY',
+      phase: 'PREP_WORD',
       activeTeam: nextTeam,
       currentRound: nextRound,
-      prompt: nextPrompt,
+      action: nextAct,
+      team1Score: team1ScoreRef.current,
+      team2Score: team2ScoreRef.current,
       timeLeft: 60
     });
   };
 
-  // Start Playing Turn
-  const handleStartTurn = () => {
-    sound.playRoundStart();
-    setTimeLeft(60);
-    setIsTimerRunning(true);
-    setPhase('PLAYING');
-    broadcastSync({ phase: 'PLAYING', timeLeft: 60 });
-  };
-
-  // Launch Match from Categories
+  // Launch Match from Lobby (NO CATEGORY SELECTION)
   const handleLaunchMatch = () => {
-    const firstPrompt = getRandomPrompt(selectedCategories, usedPromptIds);
-    setUsedPromptIds(new Set([firstPrompt.id]));
-    setCurrentPrompt(firstPrompt);
+    const firstAct = getRandomPuppetAction(usedActionIds);
+    setUsedActionIds(new Set([firstAct.id]));
+    setCurrentAction(firstAct);
+    currentActionRef.current = firstAct;
     setActiveTeam('team_1');
+    activeTeamRef.current = 'team_1';
     setCurrentRound(1);
+    currentRoundRef.current = 1;
     setTeam1Score(0);
     setTeam2Score(0);
     setTimeLeft(60);
     setIsTimerRunning(false);
     setIsPromptRevealedOnTV(false);
-    setPhase('ROUND_READY');
+    setPhase('PREP_WORD');
 
     broadcastSync({
-      phase: 'ROUND_READY',
+      phase: 'PREP_WORD',
       activeTeam: 'team_1',
       currentRound: 1,
       team1Score: 0,
       team2Score: 0,
-      prompt: firstPrompt,
+      action: firstAct,
       timeLeft: 60
     });
   };
 
-  const categoryLabel = ESHRAH_CATEGORIES_CONFIG.find(
-    (c) => c.id === currentPrompt?.category
-  )?.label || 'عام';
+  // Universal End Room
+  const handleEndRoom = () => {
+    sound.playClick();
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'ROOM_TERMINATED',
+        payload: {}
+      });
+    }
+    navigate('/');
+  };
 
   return (
     <div className="min-h-screen bg-[#E5E0D5] flex flex-col font-sans select-none overflow-hidden relative" dir="rtl">
@@ -318,50 +329,27 @@ export const MoveThePuppetTVView: React.FC = () => {
           roomCode={roomCode}
           gameTitle="حرّك الدمية"
           phase={phase}
-          onTerminate={() => {
-            sound.playClick();
-            setPhase('TEAMS');
-            broadcastSync({ phase: 'TEAMS' });
-          }}
-          onExit={() => navigate('/')}
+          onTerminate={handleEndRoom}
+          onExit={handleEndRoom}
         />
       </div>
 
       <main className="flex-1 flex flex-col items-center justify-between p-4 md:p-6 relative z-10 max-w-6xl mx-auto w-full">
-        {/* ================= 1. TEAMS ================= */}
+        {/* ================= 1. TEAMS (LOBBY) ================= */}
         {phase === 'TEAMS' && (
           <div className="w-full flex-1 flex flex-col items-center justify-center my-auto">
-            <CleanTeamSelection
+            <EshrahTVLobby
+              roomCode={roomCode}
+              gameTitle="حرّك الدمية"
+              gameRuleSnippet="توجيه جسدي وحركي صامت! لاعب من الفريق (الدمية) يقف في الصالة بدون جوال ولا يتحرك إلا بتوجيه أطرافه. فريقه يمسك الجوال لتوجيهه صامتاً لتجسيد المشهد، والمنافس يمسك الجوال لاحتساب الإجابة الصحيحة أو السرقة!"
               players={players}
-              isHost={true}
-              onJoinTeam={() => {}}
-              onConfirmTeams={() => {
-                sound.playClick();
-                setPhase('CATEGORIES');
-                broadcastSync({ phase: 'CATEGORIES' });
-              }}
-            />
-          </div>
-        )}
-
-        {/* ================= 2. CATEGORIES ================= */}
-        {phase === 'CATEGORIES' && (
-          <div className="w-full flex-1 flex flex-col items-center justify-center my-auto">
-            <CategoryPicker
-              selectedCategories={selectedCategories}
-              onChangeCategories={setSelectedCategories}
               onStartMatch={handleLaunchMatch}
-              onBackToTeams={() => {
-                sound.playClick();
-                setPhase('TEAMS');
-                broadcastSync({ phase: 'TEAMS' });
-              }}
             />
           </div>
         )}
 
-        {/* ================= 3. ROUND READY ================= */}
-        {phase === 'ROUND_READY' && (
+        {/* ================= 2. PREP WORD (STANDBY) ================= */}
+        {phase === 'PREP_WORD' && (
           <div className="w-full flex-1 flex flex-col items-center justify-center gap-6 my-auto text-center max-w-xl">
             <div className="flex items-center gap-2">
               <span className="text-xs font-black text-[#5C4033] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1.5 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
@@ -370,50 +358,34 @@ export const MoveThePuppetTVView: React.FC = () => {
               <span className={`text-xs font-black text-white px-4 py-1.5 rounded-xl border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] ${
                 activeTeam === 'team_1' ? 'bg-[#8A9A5B]' : 'bg-[#C68B59]'
               }`}>
-                دور: {activeTeam === 'team_1' ? 'فريق 1' : 'فريق 2'}
+                دور التوجيه: {activeTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'}
               </span>
             </div>
 
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-8 shadow-[6px_6px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
               <div className="bg-[#E5E0D5] p-3 rounded-2xl border-2 border-[#2C2A29]">
                 <UserCheck className="w-10 h-10 text-[#C68B59]" />
               </div>
 
               <h3 className="text-2xl font-black text-[#2C2A29]">
-                استعد لتحريك الدمية!
+                الفريق الموجّه يستعد لتحريك الدمية!
               </h3>
 
               <div className="bg-[#E5E0D5]/70 border-2 border-[#2C2A29] rounded-2xl p-4 text-xs font-bold text-[#5C4033] text-right space-y-2 w-full">
                 <div className="flex items-start gap-2">
                   <span className="text-sm font-black text-[#8A9A5B]">1.</span>
-                  <span><strong>الدمية:</strong> لاعب من الفريق يقف في الصالة <strong>بدون جوال</strong> ولا يتحرك إلا بتوجيه أطرافه.</span>
+                  <span><strong>الدمية:</strong> يقف في الصالة <strong>بدون جوال</strong> ولا يتحرك إلا عند تحريك أطرافه.</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <span className="text-sm font-black text-[#8A9A5B]">2.</span>
-                  <span><strong>فريق الدمية:</strong> يمسك الجوال لرؤية المشهد وتوجيه أطراف الدمية صامتاً بدون أي كلمة أو صوت!</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-sm font-black text-[#C68B59]">3.</span>
-                  <span><strong>الفريق المنافس:</strong> يمسك جواله للتحكيم واحتساب الوقت والنقاط.</span>
+                  <span><strong>الفريق الموجّه:</strong> يقرأ الحركة في جواله ويضغط <strong>[جاهز]</strong> لبدء الـ 60 ثانية.</span>
                 </div>
               </div>
-
-              <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl px-4 py-2 text-xs font-bold text-[#2C2A29]">
-                الفئة: <span className="font-black text-[#8A9A5B]">{categoryLabel}</span>
-              </div>
-
-              <button
-                onClick={handleStartTurn}
-                className="w-full bg-[#8A9A5B] hover:bg-[#78884d] active:scale-98 text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl py-4 font-black text-lg flex items-center justify-center gap-2 transition-all mt-2"
-              >
-                <Play className="w-6 h-6 fill-white" />
-                <span>ابدأ الوقت (60 ثانية)</span>
-              </button>
             </div>
           </div>
         )}
 
-        {/* ================= 4. PLAYING ================= */}
+        {/* ================= 3. PLAYING (60s ACTIVE) ================= */}
         {phase === 'PLAYING' && (
           <div className="w-full flex-1 flex flex-col items-center justify-between my-auto gap-6 max-w-2xl text-center">
             {/* Header info */}
@@ -424,13 +396,13 @@ export const MoveThePuppetTVView: React.FC = () => {
               <div className={`px-4 py-1.5 rounded-xl border-2 border-[#2C2A29] font-black text-xs text-white shadow-[2px_2px_0px_#2C2A29] ${
                 activeTeam === 'team_1' ? 'bg-[#8A9A5B]' : 'bg-[#C68B59]'
               }`}>
-                الفريق الموجّه: {activeTeam === 'team_1' ? 'فريق 1' : 'فريق 2'}
+                الفريق الموجّه: {activeTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'}
               </div>
             </div>
 
             {/* Giant Timer */}
             <div className={`flex items-center justify-center gap-3 px-8 py-3 rounded-3xl border-2 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] ${
-              timeLeft <= 10 ? 'bg-[#C68B59] text-white animate-pulse' : 'bg-[#F7F4EC] text-[#2C2A29]'
+              timeLeft <= 10 ? 'bg-[#C86D51] text-white animate-pulse' : 'bg-[#F7F4EC] text-[#2C2A29]'
             }`}>
               <Clock className="w-8 h-8" />
               <span className="text-5xl font-black font-mono tracking-wider">
@@ -440,14 +412,10 @@ export const MoveThePuppetTVView: React.FC = () => {
 
             {/* Central Card */}
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-8 shadow-[6px_6px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
-              <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] px-4 py-1.5 rounded-xl text-xs font-black text-[#5C4033]">
-                الفئة: {categoryLabel}
-              </div>
-
-              <div className="py-4">
+              <div className="py-2">
                 {isPromptRevealedOnTV ? (
-                  <div className="text-4xl md:text-5xl font-black text-[#2C2A29]">
-                    {currentPrompt?.text}
+                  <div className="text-3xl md:text-4xl font-black text-[#2C2A29]">
+                    {currentAction?.action}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center gap-2">
@@ -464,21 +432,21 @@ export const MoveThePuppetTVView: React.FC = () => {
               {/* Reveal toggle for host if desired */}
               <button
                 onClick={() => setIsPromptRevealedOnTV(!isPromptRevealedOnTV)}
-                className="bg-[#E5E0D5] hover:bg-[#d8d2c5] text-[#2C2A29] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-xl px-4 py-1.5 text-xs font-bold flex items-center gap-2"
+                className="bg-[#E5E0D5] hover:bg-[#d8d2c5] text-[#2C2A29] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-xl px-4 py-1.5 text-xs font-bold flex items-center gap-2 cursor-pointer"
               >
                 {isPromptRevealedOnTV ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                <span>{isPromptRevealedOnTV ? 'إخفاء المشهد عن الشاشة' : 'إظهار المشهد للمشاهدين'}</span>
+                <span>{isPromptRevealedOnTV ? 'إخفاء الحركة عن الشاشة' : 'إظهار الحركة للمشاهدين'}</span>
               </button>
             </div>
 
             {/* Bottom Status */}
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl px-6 py-3 shadow-[3px_3px_0px_#2C2A29] text-xs font-bold text-[#5C4033]">
-              التحكيم والوقت بيد الفريق المنافس عبر جوالهم
+              التحكيم واحتساب الإجابة الصحيحة بيد الفريق المنافس عبر جوالهم
             </div>
           </div>
         )}
 
-        {/* ================= 5. STEAL WINDOW ================= */}
+        {/* ================= 4. STEAL WINDOW (15s) ================= */}
         {phase === 'STEAL_WINDOW' && (
           <div className="w-full flex-1 flex flex-col items-center justify-center my-auto gap-6 max-w-xl text-center">
             <div className="bg-[#C68B59] text-white border-2 border-[#2C2A29] px-6 py-2 rounded-2xl shadow-[4px_4px_0px_#2C2A29] text-sm font-black flex items-center gap-2 animate-bounce">
@@ -488,7 +456,7 @@ export const MoveThePuppetTVView: React.FC = () => {
 
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-8 shadow-[6px_6px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
               <span className="text-sm font-black text-[#5C4033]">
-                حق التخمين انتقل لـ: {activeTeam === 'team_1' ? 'فريق 2' : 'فريق 1'}
+                حق التخمين انتقل لـ: {activeTeam === 'team_1' ? 'الفريق الثاني' : 'الفريق الأول'}
               </span>
 
               <div className="flex items-center justify-center gap-3 px-6 py-2 rounded-2xl bg-[#C68B59] text-white border-2 border-[#2C2A29]">
@@ -499,49 +467,13 @@ export const MoveThePuppetTVView: React.FC = () => {
               </div>
 
               <p className="text-xs font-bold text-[#5C4033]">
-                إذا عرف الفريق المنافس المشهد يضغط على "سرقة صحيحة (+1 pt)" في جواله!
+                إذا عرف الفريق المنافس الحركة يضغط على [سرقة صحيحة (+1 pt)] في جواله!
               </p>
             </div>
           </div>
         )}
 
-        {/* ================= 6. ROUND RESULT ================= */}
-        {phase === 'ROUND_RESULT' && (
-          <div className="w-full flex-1 flex flex-col items-center justify-center my-auto gap-6 max-w-lg text-center">
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-8 shadow-[6px_6px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
-              <CheckCircle2 className="w-12 h-12 text-[#8A9A5B]" />
-              <h3 className="text-2xl font-black text-[#2C2A29]">
-                {roundResultText || 'انتهت الجولة'}
-              </h3>
-
-              <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-2xl p-4 w-full">
-                <span className="text-xs font-bold text-[#5C4033] block mb-1">المشهد كان:</span>
-                <span className="text-2xl font-black text-[#2C2A29]">{currentPrompt?.text}</span>
-              </div>
-
-              {/* Current Score Cards */}
-              <div className="grid grid-cols-2 gap-4 w-full">
-                <div className="bg-[#8A9A5B]/15 border-2 border-[#2C2A29] rounded-2xl p-3">
-                  <div className="text-xs font-bold text-[#2C2A29]">فريق 1</div>
-                  <div className="text-3xl font-black text-[#8A9A5B]">{team1Score} pt</div>
-                </div>
-                <div className="bg-[#C68B59]/15 border-2 border-[#2C2A29] rounded-2xl p-3">
-                  <div className="text-xs font-bold text-[#2C2A29]">فريق 2</div>
-                  <div className="text-3xl font-black text-[#C68B59]">{team2Score} pt</div>
-                </div>
-              </div>
-
-              <button
-                onClick={handleAdvanceNextTurn}
-                className="w-full bg-[#8A9A5B] hover:bg-[#78884d] active:scale-98 text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl py-3.5 font-black text-base transition-all mt-2"
-              >
-                الدور التالي ➔
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ================= 7. PODIUM ================= */}
+        {/* ================= 5. PODIUM ================= */}
         {phase === 'PODIUM' && (
           <div className="w-full flex-1 flex flex-col items-center justify-center my-auto">
             <EshrahPodium
@@ -551,18 +483,18 @@ export const MoveThePuppetTVView: React.FC = () => {
                 sound.playClick();
                 handleLaunchMatch();
               }}
-              onBackToHome={() => navigate('/')}
+              onBackToHome={handleEndRoom}
             />
           </div>
         )}
 
         {/* Bottom scoreboard in non-podium phases */}
-        {phase !== 'PODIUM' && phase !== 'TEAMS' && phase !== 'CATEGORIES' && (
+        {phase !== 'PODIUM' && phase !== 'TEAMS' && (
           <div className="w-full flex items-center justify-center gap-6 mt-4">
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl px-6 py-2 shadow-[3px_3px_0px_#2C2A29] flex items-center gap-6 text-sm font-black">
-              <span className="text-[#8A9A5B]">فريق 1: {team1Score} pt</span>
+              <span className="text-[#8A9A5B]">الفريق الأول: {team1Score} pt</span>
               <span className="text-[#2C2A29]/30">|</span>
-              <span className="text-[#C68B59]">فريق 2: {team2Score} pt</span>
+              <span className="text-[#C68B59]">الفريق الثاني: {team2Score} pt</span>
             </div>
           </div>
         )}

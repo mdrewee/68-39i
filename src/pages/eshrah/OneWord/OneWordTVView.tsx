@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Clock, Trophy, Play, CheckCircle2, MessageSquare, ArrowRight, Eye, EyeOff } from 'lucide-react';
+import { Clock, Trophy, Play, CheckCircle2, Eye, EyeOff, Sparkles, ArrowRightLeft } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { EshrahTopBar } from '../../../components/eshrah/EshrahTopBar';
-import { CleanTeamSelection } from '../../../components/eshrah/CleanTeamSelection';
-import { CategoryPicker } from '../../../components/eshrah/CategoryPicker';
+import { EshrahTVLobby } from '../../../components/eshrah/EshrahTVLobby';
 import { EshrahPodium } from '../../../components/eshrah/EshrahPodium';
 import {
   EshrahPlayer,
@@ -14,8 +13,12 @@ import {
   EshrahPromptItem,
   EshrahGamePhase
 } from '../../../types/eshrah';
-import { getRandomPrompt, ESHRAH_CATEGORIES_CONFIG } from '../../../data/eshrahWordsBank';
+import { getRandomPrompt } from '../../../data/eshrahWordsBank';
 import { sound } from '../../../lib/audio';
+
+const ALL_CATEGORIES: EshrahCategory[] = [
+  'football', 'tv_series', 'movies', 'proverbs', 'theater', 'tools', 'food', 'countries'
+];
 
 export const OneWordTVView: React.FC = () => {
   const { code: rawCode } = useParams<{ code: string }>();
@@ -25,16 +28,14 @@ export const OneWordTVView: React.FC = () => {
   // State
   const [phase, setPhase] = useState<EshrahGamePhase>('TEAMS');
   const [players, setPlayers] = useState<EshrahPlayer[]>([]);
-  const [selectedCategories, setSelectedCategories] = useState<EshrahCategory[]>([
-    'football', 'tv_series', 'movies', 'proverbs', 'tools', 'food'
-  ]);
-  const [currentRound, setCurrentRound] = useState<number>(1); // 1 to 5
+  const [currentRound, setCurrentRound] = useState<number>(1); // strictly 1 to 5
   const [team1Score, setTeam1Score] = useState<number>(0);
   const [team2Score, setTeam2Score] = useState<number>(0);
   const [currentPrompt, setCurrentPrompt] = useState<EshrahPromptItem | null>(null);
   const [usedPromptIds, setUsedPromptIds] = useState<Set<string>>(new Set());
   const [activeTurnClueTeam, setActiveTurnClueTeam] = useState<EshrahTeamId>('team_1');
-  const [roundWinnerTeam, setRoundWinnerTeam] = useState<EshrahTeamId | null>(null);
+  const [turnTimeLeft, setTurnTimeLeft] = useState<number>(10); // strictly 10 seconds per clue turn
+  const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
   const [isWordRevealedOnTV, setIsWordRevealedOnTV] = useState<boolean>(false);
 
   const channelRef = useRef<RealtimeChannel | null>(null);
@@ -44,6 +45,7 @@ export const OneWordTVView: React.FC = () => {
   const team2ScoreRef = useRef(team2Score);
   const currentPromptRef = useRef(currentPrompt);
   const currentRoundRef = useRef(currentRound);
+  const activeTurnClueTeamRef = useRef(activeTurnClueTeam);
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { playersRef.current = players; }, [players]);
@@ -51,6 +53,7 @@ export const OneWordTVView: React.FC = () => {
   useEffect(() => { team2ScoreRef.current = team2Score; }, [team2Score]);
   useEffect(() => { currentPromptRef.current = currentPrompt; }, [currentPrompt]);
   useEffect(() => { currentRoundRef.current = currentRound; }, [currentRound]);
+  useEffect(() => { activeTurnClueTeamRef.current = activeTurnClueTeam; }, [activeTurnClueTeam]);
 
   // Broadcast Full State
   const broadcastSync = useCallback((customPayload?: any) => {
@@ -65,12 +68,12 @@ export const OneWordTVView: React.FC = () => {
         team2Score: team2ScoreRef.current,
         currentRound: currentRoundRef.current,
         prompt: currentPromptRef.current,
-        activeTurnClueTeam,
-        roundWinnerTeam,
+        activeTurnClueTeam: activeTurnClueTeamRef.current,
+        turnTimeLeft,
         ...customPayload
       }
     });
-  }, [activeTurnClueTeam, roundWinnerTeam]);
+  }, [turnTimeLeft]);
 
   // Setup Realtime Channel
   useEffect(() => {
@@ -111,8 +114,17 @@ export const OneWordTVView: React.FC = () => {
           prev.map((p) => (p.id === playerId ? { ...p, teamId } : p))
         );
       })
-      .on('broadcast', { event: 'ONE_WORD_ACTION' }, ({ payload }) => {
-        handleOneWordAction(payload);
+      .on('broadcast', { event: 'EXPLAINER_READY_START' }, () => {
+        handleStartTurnTimer();
+      })
+      .on('broadcast', { event: 'ONE_WORD_GUESSED' }, () => {
+        handleOneWordGuessed();
+      })
+      .on('broadcast', { event: 'PASS_CLUE_TURN' }, () => {
+        handlePassClueTurn();
+      })
+      .on('broadcast', { event: 'ROOM_TERMINATED' }, () => {
+        navigate('/');
       })
       .subscribe();
 
@@ -120,115 +132,155 @@ export const OneWordTVView: React.FC = () => {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [roomCode, broadcastSync]);
+  }, [roomCode, broadcastSync, navigate]);
 
-  // Handle Action from Mobile
-  const handleOneWordAction = (payload: { action: 'WIN_TEAM_1' | 'WIN_TEAM_2' | 'PASS_CLUE_TURN' | 'SKIP_WORD' }) => {
-    const { action } = payload;
+  // 10-Second Active Clue Turn Timer
+  useEffect(() => {
+    if (phase !== 'PLAYING' || !isTimerRunning) return;
 
-    if (action === 'WIN_TEAM_1') {
-      sound.playVictory();
-      setTeam1Score((prev) => prev + 1);
-      team1ScoreRef.current += 1;
-      setRoundWinnerTeam('team_1');
-      setIsWordRevealedOnTV(true);
-      setPhase('ROUND_RESULT');
-      broadcastSync({
-        phase: 'ROUND_RESULT',
-        roundWinnerTeam: 'team_1',
-        team1Score: team1ScoreRef.current
+    const interval = setInterval(() => {
+      setTurnTimeLeft((prev) => {
+        if (prev <= 1) {
+          handleClueTimeExpired();
+          return 10;
+        }
+        if (prev <= 3) {
+          sound.playTick();
+        }
+        return prev - 1;
       });
-    } else if (action === 'WIN_TEAM_2') {
-      sound.playVictory();
-      setTeam2Score((prev) => prev + 1);
-      team2ScoreRef.current += 1;
-      setRoundWinnerTeam('team_2');
-      setIsWordRevealedOnTV(true);
-      setPhase('ROUND_RESULT');
-      broadcastSync({
-        phase: 'ROUND_RESULT',
-        roundWinnerTeam: 'team_2',
-        team2Score: team2ScoreRef.current
-      });
-    } else if (action === 'PASS_CLUE_TURN') {
-      sound.playClick();
-      setActiveTurnClueTeam((prev) => (prev === 'team_1' ? 'team_2' : 'team_1'));
-      broadcastSync({
-        activeTurnClueTeam: activeTurnClueTeam === 'team_1' ? 'team_2' : 'team_1'
-      });
-    } else if (action === 'SKIP_WORD') {
-      sound.playClick();
-      const nextPrompt = getRandomPrompt(selectedCategories, usedPromptIds);
-      setUsedPromptIds((prev) => new Set([...prev, nextPrompt.id]));
-      setCurrentPrompt(nextPrompt);
-      currentPromptRef.current = nextPrompt;
-      broadcastSync({ prompt: nextPrompt });
-    }
-  };
+    }, 1000);
 
-  // Advance Next Round (5 rounds total)
-  const handleAdvanceNextRound = () => {
-    sound.playClick();
-    const nextRound = currentRound + 1;
+    return () => clearInterval(interval);
+  }, [phase, isTimerRunning]);
 
-    if (nextRound > 5) {
-      sound.playVictory();
-      setPhase('PODIUM');
-      broadcastSync({ phase: 'PODIUM' });
-      return;
-    }
-
-    const nextPrompt = getRandomPrompt(selectedCategories, usedPromptIds);
-    setUsedPromptIds((prev) => new Set([...prev, nextPrompt.id]));
-    setCurrentPrompt(nextPrompt);
-    setCurrentRound(nextRound);
-    setRoundWinnerTeam(null);
-    setIsWordRevealedOnTV(false);
-    setActiveTurnClueTeam('team_1');
-    setPhase('ROUND_READY');
-
+  // When 10s expires, switch clue turn to the other team with sound
+  const handleClueTimeExpired = () => {
+    sound.playTimeout();
+    const nextClueTeam: EshrahTeamId = activeTurnClueTeamRef.current === 'team_1' ? 'team_2' : 'team_1';
+    setActiveTurnClueTeam(nextClueTeam);
+    activeTurnClueTeamRef.current = nextClueTeam;
+    setTurnTimeLeft(10);
     broadcastSync({
-      phase: 'ROUND_READY',
-      currentRound: nextRound,
-      prompt: nextPrompt,
-      activeTurnClueTeam: 'team_1',
-      roundWinnerTeam: null
+      activeTurnClueTeam: nextClueTeam,
+      turnTimeLeft: 10
     });
   };
 
-  // Launch Match from Categories
-  const handleLaunchMatch = () => {
-    const firstPrompt = getRandomPrompt(selectedCategories, usedPromptIds);
-    setUsedPromptIds(new Set([firstPrompt.id]));
-    setCurrentPrompt(firstPrompt);
-    setCurrentRound(1);
-    setTeam1Score(0);
-    setTeam2Score(0);
-    setRoundWinnerTeam(null);
-    setIsWordRevealedOnTV(false);
+  // Manual pass clue turn
+  const handlePassClueTurn = () => {
+    sound.playClick();
+    const nextClueTeam: EshrahTeamId = activeTurnClueTeamRef.current === 'team_1' ? 'team_2' : 'team_1';
+    setActiveTurnClueTeam(nextClueTeam);
+    activeTurnClueTeamRef.current = nextClueTeam;
+    setTurnTimeLeft(10);
+    broadcastSync({
+      activeTurnClueTeam: nextClueTeam,
+      turnTimeLeft: 10
+    });
+  };
+
+  // Ready click from mobile
+  const handleStartTurnTimer = () => {
+    sound.playRoundStart();
+    setTurnTimeLeft(10);
+    setIsTimerRunning(true);
+    setPhase('PLAYING');
+    broadcastSync({ phase: 'PLAYING', turnTimeLeft: 10 });
+  };
+
+  // Single [جابوها ✓] clicked on guessing team's device:
+  // Awards +1 pt to active team and instantly jumps to next round!
+  const handleOneWordGuessed = () => {
+    sound.playVictory();
+    setIsTimerRunning(false);
+
+    // Award point to current clue team
+    if (activeTurnClueTeamRef.current === 'team_1') {
+      setTeam1Score((prev) => prev + 1);
+      team1ScoreRef.current += 1;
+    } else {
+      setTeam2Score((prev) => prev + 1);
+      team2ScoreRef.current += 1;
+    }
+
+    const nextRound = currentRoundRef.current + 1;
+
+    // Check if 5 rounds completed
+    if (nextRound > 5) {
+      setPhase('PODIUM');
+      broadcastSync({
+        phase: 'PODIUM',
+        team1Score: team1ScoreRef.current,
+        team2Score: team2ScoreRef.current
+      });
+      return;
+    }
+
+    // Instant jump to next round (PREP_WORD)
+    const nextPrompt = getRandomPrompt(ALL_CATEGORIES, usedPromptIds);
+    setUsedPromptIds((prev) => new Set([...prev, nextPrompt.id]));
+    setCurrentPrompt(nextPrompt);
+    currentPromptRef.current = nextPrompt;
+    setCurrentRound(nextRound);
+    currentRoundRef.current = nextRound;
     setActiveTurnClueTeam('team_1');
-    setPhase('ROUND_READY');
+    activeTurnClueTeamRef.current = 'team_1';
+    setTurnTimeLeft(10);
+    setIsWordRevealedOnTV(false);
+    setPhase('PREP_WORD');
 
     broadcastSync({
-      phase: 'ROUND_READY',
+      phase: 'PREP_WORD',
+      currentRound: nextRound,
+      prompt: nextPrompt,
+      activeTurnClueTeam: 'team_1',
+      team1Score: team1ScoreRef.current,
+      team2Score: team2ScoreRef.current,
+      turnTimeLeft: 10
+    });
+  };
+
+  // Launch Match from Lobby
+  const handleLaunchMatch = () => {
+    const firstPrompt = getRandomPrompt(ALL_CATEGORIES, usedPromptIds);
+    setUsedPromptIds(new Set([firstPrompt.id]));
+    setCurrentPrompt(firstPrompt);
+    currentPromptRef.current = firstPrompt;
+    setCurrentRound(1);
+    currentRoundRef.current = 1;
+    setTeam1Score(0);
+    setTeam2Score(0);
+    setActiveTurnClueTeam('team_1');
+    activeTurnClueTeamRef.current = 'team_1';
+    setTurnTimeLeft(10);
+    setIsTimerRunning(false);
+    setIsWordRevealedOnTV(false);
+    setPhase('PREP_WORD');
+
+    broadcastSync({
+      phase: 'PREP_WORD',
       currentRound: 1,
       team1Score: 0,
       team2Score: 0,
       prompt: firstPrompt,
-      activeTurnClueTeam: 'team_1'
+      activeTurnClueTeam: 'team_1',
+      turnTimeLeft: 10
     });
   };
 
-  // Start Playing Round
-  const handleStartPlaying = () => {
-    sound.playRoundStart();
-    setPhase('PLAYING');
-    broadcastSync({ phase: 'PLAYING' });
+  // Universal End Room
+  const handleEndRoom = () => {
+    sound.playClick();
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'ROOM_TERMINATED',
+        payload: {}
+      });
+    }
+    navigate('/');
   };
-
-  const categoryLabel = ESHRAH_CATEGORIES_CONFIG.find(
-    (c) => c.id === currentPrompt?.category
-  )?.label || 'عام';
 
   return (
     <div className="min-h-screen bg-[#E5E0D5] flex flex-col font-sans select-none overflow-hidden relative" dir="rtl">
@@ -247,173 +299,140 @@ export const OneWordTVView: React.FC = () => {
           roomCode={roomCode}
           gameTitle="كلمة واحدة"
           phase={phase}
-          onTerminate={() => {
-            sound.playClick();
-            setPhase('TEAMS');
-            broadcastSync({ phase: 'TEAMS' });
-          }}
-          onExit={() => navigate('/')}
+          onTerminate={handleEndRoom}
+          onExit={handleEndRoom}
         />
       </div>
 
       <main className="flex-1 flex flex-col items-center justify-between p-4 md:p-6 relative z-10 max-w-6xl mx-auto w-full">
-        {/* ================= 1. TEAMS ================= */}
+        {/* ================= 1. TEAMS (LOBBY) ================= */}
         {phase === 'TEAMS' && (
           <div className="w-full flex-1 flex flex-col items-center justify-center my-auto">
-            <CleanTeamSelection
+            <EshrahTVLobby
+              roomCode={roomCode}
+              gameTitle="كلمة واحدة"
+              gameRuleSnippet="مواجهة وجه لوجه بنفس الكلمة! يقف ممثل من كل فريق أمام الشاشة ويريان الكلمة السرية في جوالهما، ويتناوبان في إعطاء تلميح من كلمة واحدة فقط لكل دور (10 ثوانٍ للدور). أول فريق يصرخ بالإجابة يضغط [جابوها] ويكسب النقطة!"
               players={players}
-              isHost={true}
-              onJoinTeam={() => {}}
-              onConfirmTeams={() => {
-                sound.playClick();
-                setPhase('CATEGORIES');
-                broadcastSync({ phase: 'CATEGORIES' });
-              }}
-            />
-          </div>
-        )}
-
-        {/* ================= 2. CATEGORIES ================= */}
-        {phase === 'CATEGORIES' && (
-          <div className="w-full flex-1 flex flex-col items-center justify-center my-auto">
-            <CategoryPicker
-              selectedCategories={selectedCategories}
-              onChangeCategories={setSelectedCategories}
               onStartMatch={handleLaunchMatch}
-              onBackToTeams={() => {
-                sound.playClick();
-                setPhase('TEAMS');
-                broadcastSync({ phase: 'TEAMS' });
-              }}
             />
           </div>
         )}
 
-        {/* ================= 3. ROUND READY ================= */}
-        {phase === 'ROUND_READY' && (
+        {/* ================= 2. PREP WORD (STANDBY) ================= */}
+        {phase === 'PREP_WORD' && (
           <div className="w-full flex-1 flex flex-col items-center justify-center gap-6 my-auto text-center max-w-xl">
             <span className="text-xs font-black text-[#5C4033] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1.5 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
               جولة المواجهة {currentRound} من 5
             </span>
 
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
-              <h3 className="text-2xl font-black text-[#2C2A29]">
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-8 shadow-[6px_6px_0px_#2C2A29] w-full flex flex-col items-center gap-5">
+              <div className="w-16 h-16 rounded-2xl bg-[#8A9A5B]/15 border-2 border-[#8A9A5B] flex items-center justify-center text-[#8A9A5B]">
+                <Clock className="w-8 h-8 animate-pulse" />
+              </div>
+
+              <h3 className="text-2xl md:text-3xl font-black text-[#2C2A29]">
                 يقف ممثل من كل فريق أمام الشاشة!
               </h3>
 
-              <span className="text-xs font-black bg-[#E5E0D5] text-[#8A9A5B] px-3 py-1 rounded-xl border border-[#2C2A29]">
-                الفئة: {categoryLabel}
-              </span>
+              <p className="text-sm font-bold text-[#5C4033] max-w-md leading-relaxed">
+                الكلمة السرية معروضة على جوال الممثلين الواقفين ليأخذا وقتهما في التفكير.
+                تبدأ المواجهة بتوقيت 10 ثوانٍ لكل دور فور ضغط الممثل على <strong>[جاهز - ابدأ الجولة]</strong>!
+              </p>
 
-              <div className="text-xs font-bold text-[#5C4033] leading-relaxed max-w-md">
-                الممثلان الواقفان يريان نفس الكلمة السرية على جوالهما.. كل ممثل يعطي فريقه تلميحاً من <strong>كلمة واحدة فقط</strong> بالتبادل، وأول فريق في الصالة يصرخ بالإجابة الصحيحة يكسب النقطة!
+              <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-2xl px-6 py-2.5 text-xs font-black text-[#2C2A29]">
+                ⏱️ 10 ثوانٍ فقط لكل دور تلميح ويتنقل الدور بالتناوب
               </div>
-
-              <button
-                onClick={handleStartPlaying}
-                className="w-full py-4 mt-2 rounded-2xl font-black text-lg bg-[#8A9A5B] text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] hover:bg-[#78884e] transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Play size={20} />
-                <span>بدء المواجهة</span>
-              </button>
-            </div>
-
-            <div className="w-full flex justify-around items-center bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-3 shadow-[3px_3px_0px_#2C2A29]">
-              <span className="text-sm font-black text-[#8A9A5B]">الفريق الأول: {team1Score} pt</span>
-              <span className="text-xs text-[#5C4033]">|</span>
-              <span className="text-sm font-black text-[#C68B59]">الفريق الثاني: {team2Score} pt</span>
             </div>
           </div>
         )}
 
-        {/* ================= 4. PLAYING ================= */}
+        {/* ================= 3. PLAYING (10s ALTERNATING TURN) ================= */}
         {phase === 'PLAYING' && (
-          <div className="w-full flex-1 flex flex-col items-center justify-between my-auto gap-6 max-w-2xl">
-            {/* Header Status */}
-            <div className="flex justify-between items-center w-full bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-4 shadow-[3px_3px_0px_#2C2A29]">
-              <span className="text-sm font-black text-[#2C2A29]">
-                المواجهة قائمة: تلميح كلمة واحدة بالتبادل
+          <div className="w-full flex-1 flex flex-col items-center justify-between my-auto gap-6 max-w-2xl text-center">
+            {/* Top Bar Status */}
+            <div className="flex items-center justify-between w-full">
+              <span className="text-xs font-black text-[#2C2A29] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1.5 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
+                جولة {currentRound} / 5
               </span>
-              <span className="text-xs font-black bg-[#E5E0D5] border border-[#2C2A29] px-3 py-1 rounded-xl">
-                فئة: {categoryLabel}
+              <div className={`px-4 py-1.5 rounded-xl border-2 border-[#2C2A29] font-black text-xs text-white shadow-[2px_2px_0px_#2C2A29] ${
+                activeTurnClueTeam === 'team_1' ? 'bg-[#8A9A5B]' : 'bg-[#C68B59]'
+              }`}>
+                دور التلميح الآن: {activeTurnClueTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'}
+              </div>
+            </div>
+
+            {/* Giant 10-Second Timer */}
+            <div className={`flex items-center justify-center gap-3 px-10 py-3.5 rounded-3xl border-2 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] ${
+              turnTimeLeft <= 3 ? 'bg-[#C86D51] text-white animate-pulse' : 'bg-[#F7F4EC] text-[#2C2A29]'
+            }`}>
+              <Clock className="w-8 h-8" />
+              <span className="text-6xl font-black font-mono tracking-wider">
+                00:{turnTimeLeft.toString().padStart(2, '0')}
               </span>
             </div>
 
-            {/* Arena Card */}
-            <div className="flex flex-col items-center justify-center bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] rounded-3xl p-8 w-full text-center gap-4">
-              <span className="text-xs font-black text-[#5C4033]">
-                الدور في إعطاء التلميح الآن عند ممثل:
+            {/* Turn Clue Box */}
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-8 shadow-[6px_6px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
+              <span className="text-sm font-black text-[#5C4033]">
+                الدور في إعطاء التلميح والتخمين عند:
               </span>
 
-              <div className="text-2xl md:text-3xl font-black bg-[#E5E0D5] px-6 py-2 rounded-2xl border-2 border-[#2C2A29]">
+              <div className={`text-3xl md:text-4xl font-black px-8 py-3 rounded-2xl border-2 border-[#2C2A29] text-white shadow-[3px_3px_0px_#2C2A29] ${
+                activeTurnClueTeam === 'team_1' ? 'bg-[#8A9A5B]' : 'bg-[#C68B59]'
+              }`}>
                 {activeTurnClueTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'}
               </div>
 
-              {/* Secret Word Box (Hidden on TV so sitting players can't cheat) */}
+              {/* Secret Word Box (Hidden on TV to keep prompt blind) */}
               <div className="w-full bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-2xl p-4 mt-2 flex flex-col items-center gap-2">
                 <div className="flex items-center gap-2 text-xs font-bold text-[#5C4033]">
                   {isWordRevealedOnTV ? <Eye size={15} /> : <EyeOff size={15} />}
-                  <span>الكلمة السرية تظهر على جوال الممثلَين الواقفَين فقط لمنع الغش!</span>
+                  <span>الكلمة السرية على جوال الممثلين لمنع كشفها للمخمنين بالصالة!</span>
                 </div>
 
                 {isWordRevealedOnTV && (
-                  <div className="text-3xl font-black text-[#8A9A5B] mt-1">
+                  <div className="text-3xl font-black text-[#2C2A29] mt-1">
                     {currentPrompt?.text}
                   </div>
                 )}
               </div>
-            </div>
 
-            {/* Score Strip */}
-            <div className="w-full flex justify-around items-center bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-3 shadow-[3px_3px_0px_#2C2A29]">
-              <span className="text-sm font-black text-[#8A9A5B]">الفريق الأول: {team1Score} pt</span>
-              <span className="text-xs text-[#5C4033]">الجولة {currentRound} / 5</span>
-              <span className="text-sm font-black text-[#C68B59]">الفريق الثاني: {team2Score} pt</span>
-            </div>
-          </div>
-        )}
-
-        {/* ================= 5. ROUND RESULT ================= */}
-        {phase === 'ROUND_RESULT' && (
-          <div className="w-full flex-1 flex flex-col items-center justify-center gap-6 my-auto text-center max-w-lg">
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
-              <span className="text-xs font-black text-[#5C4033] bg-[#E5E0D5] px-3 py-1 rounded-xl border border-[#2C2A29]">
-                نهاية الجولة {currentRound}
-              </span>
-
-              <h3 className="text-2xl font-black text-[#2C2A29]">
-                أحرز النقطة:{' '}
-                <span className={roundWinnerTeam === 'team_1' ? 'text-[#8A9A5B]' : 'text-[#C68B59]'}>
-                  {roundWinnerTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'} (+1 pt)
-                </span>
-              </h3>
-
-              <div className="w-full p-4 rounded-2xl bg-[#E5E0D5] border-2 border-[#2C2A29] flex flex-col gap-1 text-center my-2">
-                <span className="text-xs font-bold text-[#5C4033]">الكلمة السرية كانت:</span>
-                <span className="text-2xl font-black text-[#8A9A5B]">{currentPrompt?.text}</span>
-              </div>
-
+              {/* Reveal toggle for host if needed */}
               <button
-                onClick={handleAdvanceNextRound}
-                className="w-full py-3.5 rounded-2xl font-black text-base bg-[#8A9A5B] text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] hover:bg-[#78884e] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                onClick={() => setIsWordRevealedOnTV(!isWordRevealedOnTV)}
+                className="bg-[#E5E0D5] hover:bg-[#d8d2c5] text-[#2C2A29] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-xl px-4 py-1.5 text-xs font-bold flex items-center gap-2 cursor-pointer"
               >
-                <span>الانتقال للجولة التالية</span>
+                {isWordRevealedOnTV ? <EyeOff size={14} /> : <Eye size={14} />}
+                <span>{isWordRevealedOnTV ? 'إخفاء الكلمة عن الشاشة' : 'إظهار الكلمة للمشاهدين'}</span>
               </button>
             </div>
           </div>
         )}
 
-        {/* ================= 6. PODIUM ================= */}
+        {/* ================= 4. PODIUM ================= */}
         {phase === 'PODIUM' && (
-          <EshrahPodium
-            team1Score={team1Score}
-            team2Score={team2Score}
-            onPlayAgain={() => {
-              setPhase('TEAMS');
-              broadcastSync({ phase: 'TEAMS' });
-            }}
-            onBackToHome={() => navigate('/')}
-          />
+          <div className="w-full flex-1 flex flex-col items-center justify-center my-auto">
+            <EshrahPodium
+              team1Score={team1Score}
+              team2Score={team2Score}
+              onPlayAgain={() => {
+                sound.playClick();
+                handleLaunchMatch();
+              }}
+              onBackToHome={handleEndRoom}
+            />
+          </div>
+        )}
+
+        {/* Bottom scoreboard during gameplay */}
+        {phase !== 'PODIUM' && phase !== 'TEAMS' && (
+          <div className="w-full flex items-center justify-center gap-6 mt-4">
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl px-6 py-2 shadow-[3px_3px_0px_#2C2A29] flex items-center gap-6 text-sm font-black">
+              <span className="text-[#8A9A5B]">الفريق الأول: {team1Score} pt</span>
+              <span className="text-[#2C2A29]/30">|</span>
+              <span className="text-[#C68B59]">الفريق الثاني: {team2Score} pt</span>
+            </div>
+          </div>
         )}
       </main>
     </div>

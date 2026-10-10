@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Check, X, SkipForward, AlertOctagon, ShieldAlert, Award } from 'lucide-react';
+import { Check, X, AlertOctagon, Clock, Users, Play, ShieldAlert, Award } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { MobileTopBar } from '../../../components/MobileTopBar';
@@ -30,7 +30,6 @@ export const ForbiddenWordsMobileView: React.FC = () => {
   const [currentRound, setCurrentRound] = useState<number>(1);
   const [currentPrompt, setCurrentPrompt] = useState<EshrahPromptItem | null>(null);
   const [currentRunCorrectCount, setCurrentRunCorrectCount] = useState<number>(0);
-  const [skipsRemaining, setSkipsRemaining] = useState<number>(2);
   const [timeLeft, setTimeLeft] = useState<number>(60);
   const [team1Score, setTeam1Score] = useState<number>(0);
   const [team2Score, setTeam2Score] = useState<number>(0);
@@ -79,6 +78,9 @@ export const ForbiddenWordsMobileView: React.FC = () => {
         if (payload.team1Score !== undefined) setTeam1Score(payload.team1Score);
         if (payload.team2Score !== undefined) setTeam2Score(payload.team2Score);
       })
+      .on('broadcast', { event: 'ROOM_TERMINATED' }, () => {
+        navigate('/');
+      })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           await channel.track({
@@ -94,7 +96,7 @@ export const ForbiddenWordsMobileView: React.FC = () => {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [roomCode, playerId, playerName, myTeamId]);
+  }, [roomCode, playerId, playerName, myTeamId, navigate]);
 
   // Handle joining a team
   const handleJoinTeam = (teamId: EshrahTeamId) => {
@@ -114,11 +116,24 @@ export const ForbiddenWordsMobileView: React.FC = () => {
     }
   };
 
-  // Actions
-  const handleAction = (action: 'CORRECT' | 'VIOLATION' | 'SKIP') => {
-    if (action === 'SKIP') {
-      if (skipsRemaining <= 0) return;
-      setSkipsRemaining((prev) => prev - 1);
+  // Explainer Ready Click (Starts 60s Timer)
+  const handleStartTimer = () => {
+    sound.playRoundStart();
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'EXPLAINER_READY_START',
+        payload: {}
+      });
+    }
+  };
+
+  // Explainer-Led Actions: [جبتها ✓] or [مخالفة كلمة محظورة ✗]
+  const handleTabooAction = (action: 'CORRECT' | 'VIOLATION') => {
+    if (action === 'CORRECT') {
+      sound.playCorrect();
+    } else {
+      sound.playIncorrect();
     }
 
     if (channelRef.current) {
@@ -131,7 +146,6 @@ export const ForbiddenWordsMobileView: React.FC = () => {
   };
 
   const isMyTeamExplaining = myTeamId === activeTeam;
-  const isMyTeamAuditing = myTeamId !== null && myTeamId !== activeTeam;
 
   return (
     <div className="min-h-screen bg-[#E5E0D5] flex flex-col font-sans select-none overflow-x-hidden relative" dir="rtl">
@@ -140,7 +154,7 @@ export const ForbiddenWordsMobileView: React.FC = () => {
         className="fixed inset-0 pointer-events-none opacity-40 z-0"
         style={{
           backgroundImage: 'radial-gradient(#2C2A29 1px, transparent 1px)',
-          backgroundSize: '20px 20px'
+          backgroundSize: '24px 24px'
         }}
       />
 
@@ -148,19 +162,21 @@ export const ForbiddenWordsMobileView: React.FC = () => {
       <div className="relative z-20">
         <MobileTopBar
           roomCode={roomCode}
-          playerName={playerName}
-          title="كلمات محظورة"
-          onLeaveRoom={() => {
-            sessionStorage.clear();
-            navigate('/');
-          }}
+          onExit={() => navigate('/')}
         />
       </div>
 
-      <main className="flex-1 flex flex-col max-w-md w-full mx-auto p-3 relative z-10 justify-between pb-6">
-        {/* ================= 1. TEAMS ================= */}
+      <main className="flex-1 flex flex-col p-4 relative z-10 max-w-lg mx-auto w-full">
+        {/* ================= 1. TEAMS (LOBBY SELECTION ON MOBILE) ================= */}
         {phase === 'TEAMS' && (
-          <div className="flex-1 flex flex-col justify-center my-auto">
+          <div className="flex-1 flex flex-col items-center justify-center my-auto w-full">
+            <div className="text-center mb-6">
+              <span className="text-xs font-black text-[#5C4033] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1.5 rounded-xl shadow-[2px_2px_0px_#2C2A29] inline-block mb-2">
+                اشرح: كلمات محظورة
+              </span>
+              <h2 className="text-xl font-black text-[#2C2A29]">اختر فريقك</h2>
+            </div>
+
             <CleanTeamSelection
               players={players}
               currentUserId={playerId}
@@ -171,165 +187,207 @@ export const ForbiddenWordsMobileView: React.FC = () => {
           </div>
         )}
 
-        {/* ================= 2. CATEGORIES ================= */}
-        {phase === 'CATEGORIES' && (
-          <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 my-auto">
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-6 shadow-[3px_3px_0px_#2C2A29] w-full">
-              <span className="text-sm font-bold text-[#5C4033] block mb-2">
-                جاري تحديد الفئات من شاشة المضيف...
+        {/* ================= 2. PREP WORD (EXPLAINER STRATEGY & READY BUTTON) ================= */}
+        {phase === 'PREP_WORD' && (
+          <div className="flex-1 flex flex-col justify-between gap-4 my-auto w-full">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-[#2C2A29] bg-[#F7F4EC] border-2 border-[#2C2A29] px-3 py-1.5 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
+                جولة {currentRound} من 3
               </span>
-              <p className="text-xs text-[#2C2A29]">
-                أنت في <strong className="text-[#8A9A5B]">{myTeamId === 'team_1' ? 'الفريق الأول' : myTeamId === 'team_2' ? 'الفريق الثاني' : 'بانتظار الانضمام'}</strong>
-              </p>
+              <span className={`text-xs font-black px-3 py-1.5 rounded-xl border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] text-white ${
+                activeTeam === 'team_1' ? 'bg-[#8A9A5B]' : 'bg-[#C68B59]'
+              }`}>
+                {activeTeam === 'team_1' ? 'دور الفريق الأول' : 'دور الفريق الثاني'}
+              </span>
             </div>
+
+            {isMyTeamExplaining ? (
+              /* EXPLAINER PREP VIEW */
+              <div className="flex-1 flex flex-col justify-between gap-4 my-auto">
+                <div className="bg-[#8A9A5B]/15 border-2 border-[#8A9A5B] rounded-2xl p-3 text-center">
+                  <span className="text-xs font-black text-[#8A9A5B]">
+                    👁️ راجع الكلمة والمحظورات.. الوقت يبدأ فقط عند ضغطك [جاهز]!
+                  </span>
+                </div>
+
+                {/* Secret Card */}
+                <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] flex flex-col items-center gap-4">
+                  <span className="text-xs font-bold text-[#5C4033]">الكلمة المطلوب شرحها:</span>
+                  <div className="text-3xl md:text-4xl font-black text-[#2C2A29] text-center border-b-2 border-[#2C2A29]/15 pb-4 w-full">
+                    {currentPrompt?.text}
+                  </div>
+
+                  {/* Forbidden Words in Red Box */}
+                  <div className="w-full bg-[#B85C5C]/10 border-2 border-[#B85C5C] rounded-2xl p-4 flex flex-col items-center gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-black text-[#B85C5C] mb-1">
+                      <AlertOctagon size={16} />
+                      <span>الكلمات المحظورة (ممنوع نطقها نهائياً!):</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 justify-center w-full">
+                      {(currentPrompt?.forbiddenWords || []).map((w, idx) => (
+                        <span
+                          key={idx}
+                          className="text-xs font-black bg-[#F7F4EC] text-[#B85C5C] border-2 border-[#B85C5C] px-3 py-1 rounded-xl shadow-xs"
+                        >
+                          {w}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Big Ready Button */}
+                <button
+                  onClick={handleStartTimer}
+                  className="w-full bg-[#8A9A5B] hover:bg-[#78884d] active:scale-98 text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl py-4 flex items-center justify-center gap-2 font-black text-lg transition-all cursor-pointer"
+                >
+                  <Play className="w-6 h-6 fill-white" />
+                  <span>جاهز - ابدأ الوقت (60 ثانية)</span>
+                </button>
+              </div>
+            ) : (
+              /* AUDITOR / OPPONENT PREP VIEW */
+              <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 my-auto">
+                <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[4px_4px_0px_#2C2A29] w-full flex flex-col items-center gap-3">
+                  <Clock className="w-12 h-12 text-[#C68B59] animate-pulse" />
+                  <h3 className="text-xl font-black text-[#2C2A29]">
+                    الفريق المنافس يستعد للشرح!
+                  </h3>
+                  <p className="text-xs font-bold text-[#5C4033] leading-relaxed">
+                    الشارح يراجع كلمته ومحظوراته في جواله الآن. استعدوا للتركيز والاستماع الشديد لضبط أي كلمة محظورة!
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* ================= 3. ROUND READY ================= */}
-        {phase === 'ROUND_READY' && (
-          <div className="flex-1 flex flex-col items-center justify-center text-center gap-5 my-auto">
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-6 shadow-[4px_4px_0px_#2C2A29] w-full flex flex-col items-center gap-3">
-              <span className="text-xs font-black bg-[#E5E0D5] px-3 py-1 rounded-xl border border-[#2C2A29]">
-                جولة السرعة {currentRound} من 3
-              </span>
-
-              {isMyTeamExplaining ? (
-                <>
-                  <h3 className="text-xl font-black text-[#8A9A5B]">فريقك هو الشارح!</h3>
-                  <p className="text-xs font-bold text-[#5C4033] leading-relaxed">
-                    استلم الجوال، جهز سرعة كلامك، واشرح أكبر عدد من الكلمات في 60 ثانية بدون الكلمات المحظورة!
-                  </p>
-                </>
-              ) : (
-                <>
-                  <h3 className="text-xl font-black text-[#C68B59]">فريقك هو المدقق (الحكم)!</h3>
-                  <p className="text-xs font-bold text-[#5C4033] leading-relaxed">
-                    استلم الجوال، استمع بتركيز شديد للشارح، واضغط مخالفة فوراً إذا نطق أي كلمة محظورة!
-                  </p>
-                </>
-              )}
-            </div>
-
-            <div className="w-full flex justify-around p-3 rounded-xl bg-[#F7F4EC] border-2 border-[#2C2A29] text-xs font-black">
-              <span>الفريق الأول: {team1Score} pt</span>
-              <span>الفريق الثاني: {team2Score} pt</span>
-            </div>
-          </div>
-        )}
-
-        {/* ================= 4. PLAYING (60s SPEED RUN) ================= */}
+        {/* ================= 3. PLAYING (60s SPEED RUN) ================= */}
         {phase === 'PLAYING' && (
-          <div className="flex-1 flex flex-col justify-between gap-3">
+          <div className="flex-1 flex flex-col justify-between gap-4 my-auto w-full">
             {/* Header Status */}
-            <div className="flex justify-between items-center bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-3 shadow-sm">
-              <span className="text-xs font-black text-[#2C2A29]">
-                {isMyTeamExplaining ? 'أنت الشارح (اشرح لفريقك)' : 'أنت المدقق (دقق على الشارح)'}
-              </span>
-              <span className="text-xs font-black text-[#8A9A5B]">
-                {currentRunCorrectCount} صح ✓
-              </span>
-            </div>
-
-            {/* TABOO CARD: Main Word + 4 Forbidden Words */}
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-5 shadow-[4px_4px_0px_#2C2A29] flex flex-col items-center gap-3">
-              <span className="text-[11px] font-bold text-[#5C4033]">الكلمة المطلوب شرحها:</span>
-              <div className="text-3xl font-black text-[#2C2A29] text-center border-b-2 border-[#2C2A29] pb-3 w-full">
-                {currentPrompt?.text}
+            <div className="flex justify-between items-center bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-3 shadow-[2px_2px_0px_#2C2A29]">
+              <div className="flex items-center gap-2 font-black text-xs text-[#2C2A29]">
+                <Clock className="w-4 h-4 text-[#C68B59]" />
+                <span className="font-mono text-base">00:{timeLeft.toString().padStart(2, '0')}</span>
               </div>
-
-              {/* Forbidden Words List */}
-              <div className="w-full bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-2xl p-3 flex flex-col items-center gap-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-black text-[#C86D51] mb-1">
-                  <AlertOctagon size={15} />
-                  <span>الكلمات المحظورة (ممنوع نطقها):</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5 justify-center w-full">
-                  {(currentPrompt?.forbiddenWords || ['الهلال', 'كرة', 'ملعب', 'هدف']).map((w, idx) => (
-                    <span
-                      key={idx}
-                      className="text-xs font-black bg-[#F7F4EC] text-[#2C2A29] border border-[#2C2A29] px-2.5 py-1 rounded-xl shadow-xs"
-                    >
-                      {w}
-                    </span>
-                  ))}
-                </div>
+              <div className="text-xs font-black text-[#8A9A5B] bg-[#8A9A5B]/15 px-3 py-1 rounded-xl border border-[#8A9A5B]">
+                {currentRunCorrectCount} صحيحة ✓
               </div>
             </div>
 
-            {/* CONTROLS */}
-            {/* Explainer Controls (Skip only) */}
-            {isMyTeamExplaining && (
-              <div className="flex flex-col gap-2 pt-1">
-                <button
-                  disabled={skipsRemaining <= 0}
-                  onClick={() => handleAction('SKIP')}
-                  className={`w-full py-3.5 rounded-2xl font-black text-sm border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] flex items-center justify-center gap-2 transition-all ${
-                    skipsRemaining > 0
-                      ? 'bg-[#C68B59] text-white hover:bg-[#b07849] active:translate-y-0.5 cursor-pointer'
-                      : 'bg-[#E5E0D5] text-[#2C2A29]/40 border-[#2C2A29]/40 shadow-none cursor-not-allowed'
-                  }`}
-                >
-                  <SkipForward size={16} />
-                  <span>تخطي الكرت (باقي {skipsRemaining} مرات)</span>
-                </button>
+            {isMyTeamExplaining ? (
+              /* EXPLAINER CONTROLS */
+              <div className="flex-1 flex flex-col justify-between gap-4 my-auto">
+                {/* Secret Card */}
+                <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] flex flex-col items-center gap-4">
+                  <span className="text-xs font-bold text-[#5C4033]">الكلمة المطلوب شرحها:</span>
+                  <div className="text-3xl md:text-4xl font-black text-[#2C2A29] text-center border-b-2 border-[#2C2A29]/15 pb-4 w-full">
+                    {currentPrompt?.text}
+                  </div>
+
+                  {/* 4 Forbidden Words inside Red Box */}
+                  <div className="w-full bg-[#B85C5C]/10 border-2 border-[#B85C5C] rounded-2xl p-4 flex flex-col items-center gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-black text-[#B85C5C] mb-1">
+                      <AlertOctagon size={16} />
+                      <span>الكلمات المحظورة (ممنوع نطقها):</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 justify-center w-full">
+                      {(currentPrompt?.forbiddenWords || []).map((w, idx) => (
+                        <span
+                          key={idx}
+                          className="text-xs font-black bg-[#F7F4EC] text-[#B85C5C] border-2 border-[#B85C5C] px-3 py-1 rounded-xl shadow-xs"
+                        >
+                          {w}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Two Large Action Buttons */}
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => handleTabooAction('CORRECT')}
+                    className="w-full bg-[#8A9A5B] hover:bg-[#78884d] active:scale-98 text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl py-4 flex items-center justify-center gap-2 font-black text-lg transition-all cursor-pointer"
+                  >
+                    <Check className="w-6 h-6 stroke-[3]" />
+                    <span>جبتها ✓ (+1 pt والتالي)</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleTabooAction('VIOLATION')}
+                    className="w-full bg-[#B85C5C] hover:bg-[#a04e4e] active:scale-98 text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl py-3.5 flex items-center justify-center gap-2 font-black text-sm transition-all cursor-pointer"
+                  >
+                    <X className="w-5 h-5 stroke-[3]" />
+                    <span>مخالفة كلمة محظورة ✗ (تخطي 0 pt)</span>
+                  </button>
+                </div>
               </div>
-            )}
-
-            {/* Auditor Controls (Opponent Team): Correct & Violation */}
-            {isMyTeamAuditing && (
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <button
-                  onClick={() => handleAction('CORRECT')}
-                  className="py-4 rounded-2xl font-black text-sm bg-[#8A9A5B] text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] hover:bg-[#78884e] active:translate-y-0.5 flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Check size={18} strokeWidth={3} />
-                  <span>جابوها صح! (+1)</span>
-                </button>
-
-                <button
-                  onClick={() => handleAction('VIOLATION')}
-                  className="py-4 rounded-2xl font-black text-xs bg-[#C86D51] text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] hover:bg-[#2C2A29] active:translate-y-0.5 flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <X size={18} strokeWidth={3} />
-                  <span>مخالفة كلمة محظورة ✗</span>
-                </button>
+            ) : (
+              /* AUDITOR (OPPONENT TEAM) VIEW: ZERO BUTTONS */
+              <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 my-auto">
+                <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[4px_4px_0px_#2C2A29] w-full flex flex-col items-center gap-3">
+                  <ShieldAlert className="w-12 h-12 text-[#C68B59]" />
+                  <h3 className="text-xl font-black text-[#2C2A29]">
+                    الفريق المنافس يشرح الآن!
+                  </h3>
+                  <p className="text-xs font-bold text-[#5C4033] leading-relaxed">
+                    استمعوا وركزوا لمنع ونقد أي كلمة محظورة ينطقها الشارح. الشارح يدير تسجيل النقاط والمخالفات بنفسه!
+                  </p>
+                </div>
               </div>
             )}
           </div>
         )}
 
-        {/* ================= 5. ROUND RESULT ================= */}
+        {/* ================= 4. ROUND RESULT ================= */}
         {phase === 'ROUND_RESULT' && (
           <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 my-auto">
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-5 shadow-[3px_3px_0px_#2C2A29] w-full">
-              <span className="text-xs font-black text-[#5C4033] block mb-2">انتهت 60 ثانية:</span>
-              <p className="text-xl font-black text-[#2C2A29]">
-                أحرز الفريق الشارح: <span className="text-[#8A9A5B]">{currentRunCorrectCount} كلمات ✓</span>
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[4px_4px_0px_#2C2A29] w-full">
+              <span className="text-xs font-black text-[#5C4033] block mb-2">انتهت الجولة:</span>
+              <p className="text-2xl font-black text-[#2C2A29] mb-4">
+                أحرز الفريق: <span className="text-[#8A9A5B]">+{currentRunCorrectCount} pt ✓</span>
               </p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-[#8A9A5B]/15 border-2 border-[#2C2A29] rounded-2xl p-3">
+                  <div className="text-xs font-bold text-[#2C2A29]">الفريق الأول</div>
+                  <div className="text-2xl font-black text-[#8A9A5B]">{team1Score} pt</div>
+                </div>
+                <div className="bg-[#C68B59]/15 border-2 border-[#2C2A29] rounded-2xl p-3">
+                  <div className="text-xs font-bold text-[#2C2A29]">الفريق الثاني</div>
+                  <div className="text-2xl font-black text-[#C68B59]">{team2Score} pt</div>
+                </div>
+              </div>
             </div>
 
             <div className="text-xs font-bold text-[#5C4033]">
-              بانتظار بدء الجولة التالية من شاشة العرض...
+              بانتظار الانتقال للدور التالي من شاشة العرض...
             </div>
           </div>
         )}
 
-        {/* ================= 6. PODIUM ================= */}
+        {/* ================= 5. PODIUM ================= */}
         {phase === 'PODIUM' && (
           <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 my-auto">
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-6 shadow-[4px_4px_0px_#2C2A29] w-full">
-              <h3 className="text-2xl font-black text-[#2C2A29] mb-3">نهاية التحدي!</h3>
-              <p className="text-sm font-bold text-[#8A9A5B]">
-                الفريق الأول: {team1Score} pt | الفريق الثاني: {team2Score} pt
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] w-full">
+              <Award className="w-14 h-14 text-[#C68B59] mx-auto mb-3" />
+              <h3 className="text-2xl font-black text-[#2C2A29] mb-2">نهاية المباراة!</h3>
+              <p className="text-sm font-bold text-[#5C4033] mb-4">
+                تابع منصة التتويج والنتائج على شاشة التلفزيون.
               </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-[#8A9A5B] text-white border-2 border-[#2C2A29] rounded-2xl p-3">
+                  <div className="text-xs font-bold">الفريق الأول</div>
+                  <div className="text-2xl font-black">{team1Score} pt</div>
+                </div>
+                <div className="bg-[#C68B59] text-white border-2 border-[#2C2A29] rounded-2xl p-3">
+                  <div className="text-xs font-bold">الفريق الثاني</div>
+                  <div className="text-2xl font-black">{team2Score} pt</div>
+                </div>
+              </div>
             </div>
-
-            <button
-              onClick={() => navigate('/')}
-              className="w-full bg-[#C68B59] text-white py-3.5 rounded-2xl font-black text-base border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29]"
-            >
-              العودة للرئيسية
-            </button>
           </div>
         )}
       </main>

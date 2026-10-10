@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Clock, Trophy, Play, CheckCircle2, AlertOctagon, ShieldAlert, Award } from 'lucide-react';
+import { Clock, Trophy, Play, CheckCircle2, AlertOctagon, Flame } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { EshrahTopBar } from '../../../components/eshrah/EshrahTopBar';
-import { CleanTeamSelection } from '../../../components/eshrah/CleanTeamSelection';
-import { CategoryPicker } from '../../../components/eshrah/CategoryPicker';
+import { EshrahTVLobby } from '../../../components/eshrah/EshrahTVLobby';
 import { EshrahPodium } from '../../../components/eshrah/EshrahPodium';
 import {
   EshrahPlayer,
@@ -14,8 +13,12 @@ import {
   EshrahPromptItem,
   EshrahGamePhase
 } from '../../../types/eshrah';
-import { getRandomPrompt, ESHRAH_CATEGORIES_CONFIG } from '../../../data/eshrahWordsBank';
+import { getRandomPrompt } from '../../../data/eshrahWordsBank';
 import { sound } from '../../../lib/audio';
+
+const ALL_CATEGORIES: EshrahCategory[] = [
+  'football', 'tv_series', 'movies', 'proverbs', 'theater', 'tools', 'food', 'countries'
+];
 
 export const ForbiddenWordsTVView: React.FC = () => {
   const { code: rawCode } = useParams<{ code: string }>();
@@ -25,11 +28,8 @@ export const ForbiddenWordsTVView: React.FC = () => {
   // State
   const [phase, setPhase] = useState<EshrahGamePhase>('TEAMS');
   const [players, setPlayers] = useState<EshrahPlayer[]>([]);
-  const [selectedCategories, setSelectedCategories] = useState<EshrahCategory[]>([
-    'football', 'tv_series', 'movies', 'proverbs', 'tools', 'food'
-  ]);
   const [activeTeam, setActiveTeam] = useState<EshrahTeamId>('team_1');
-  const [currentRound, setCurrentRound] = useState<number>(1); // 1 to 3 per team
+  const [currentRound, setCurrentRound] = useState<number>(1); // 1 to 3 per team (6 turns total)
   const [team1Score, setTeam1Score] = useState<number>(0);
   const [team2Score, setTeam2Score] = useState<number>(0);
   const [currentRunCorrectCount, setCurrentRunCorrectCount] = useState<number>(0);
@@ -37,7 +37,6 @@ export const ForbiddenWordsTVView: React.FC = () => {
   const [usedPromptIds, setUsedPromptIds] = useState<Set<string>>(new Set());
   const [timeLeft, setTimeLeft] = useState<number>(60);
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
-  const [recentNotification, setRecentNotification] = useState<{ type: 'HIT' | 'VIOLATION' | 'SKIP'; word: string } | null>(null);
 
   const channelRef = useRef<RealtimeChannel | null>(null);
   const phaseRef = useRef(phase);
@@ -118,8 +117,14 @@ export const ForbiddenWordsTVView: React.FC = () => {
           prev.map((p) => (p.id === playerId ? { ...p, teamId } : p))
         );
       })
+      .on('broadcast', { event: 'EXPLAINER_READY_START' }, () => {
+        handleExplainerReady();
+      })
       .on('broadcast', { event: 'TABOO_ACTION' }, ({ payload }) => {
         handleTabooAction(payload);
+      })
+      .on('broadcast', { event: 'ROOM_TERMINATED' }, () => {
+        navigate('/');
       })
       .subscribe();
 
@@ -127,9 +132,9 @@ export const ForbiddenWordsTVView: React.FC = () => {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [roomCode, broadcastSync]);
+  }, [roomCode, broadcastSync, navigate]);
 
-  // 60s Round Timer
+  // 60s Round Timer Loop
   useEffect(() => {
     if (phase !== 'PLAYING' || !isTimerRunning) return;
 
@@ -150,10 +155,18 @@ export const ForbiddenWordsTVView: React.FC = () => {
     return () => clearInterval(interval);
   }, [phase, isTimerRunning]);
 
-  // Handle Taboo Action from Mobile
-  const handleTabooAction = (payload: { action: 'CORRECT' | 'VIOLATION' | 'SKIP' }) => {
+  // Explainer clicks [جاهز - ابدأ الوقت] on mobile
+  const handleExplainerReady = () => {
+    sound.playRoundStart();
+    setTimeLeft(60);
+    setIsTimerRunning(true);
+    setPhase('PLAYING');
+    broadcastSync({ phase: 'PLAYING', timeLeft: 60 });
+  };
+
+  // Explainer reports: [جبتها ✓] or [مخالفة كلمة محظورة ✗]
+  const handleTabooAction = (payload: { action: 'CORRECT' | 'VIOLATION' }) => {
     const { action } = payload;
-    const oldWord = currentPromptRef.current?.text || '';
 
     if (action === 'CORRECT') {
       sound.playCorrect();
@@ -166,17 +179,12 @@ export const ForbiddenWordsTVView: React.FC = () => {
         setTeam2Score((prev) => prev + 1);
         team2ScoreRef.current += 1;
       }
-      setRecentNotification({ type: 'HIT', word: oldWord });
     } else if (action === 'VIOLATION') {
       sound.playIncorrect();
-      setRecentNotification({ type: 'VIOLATION', word: oldWord });
-    } else if (action === 'SKIP') {
-      sound.playClick();
-      setRecentNotification({ type: 'SKIP', word: oldWord });
     }
 
-    // Load next prompt in speed-run
-    const nextPrompt = getRandomPrompt(selectedCategories, usedPromptIds);
+    // Load next card instantly
+    const nextPrompt = getRandomPrompt(ALL_CATEGORIES, usedPromptIds);
     setUsedPromptIds((prev) => new Set([...prev, nextPrompt.id]));
     setCurrentPrompt(nextPrompt);
     currentPromptRef.current = nextPrompt;
@@ -189,7 +197,7 @@ export const ForbiddenWordsTVView: React.FC = () => {
     });
   };
 
-  // When 60s expires
+  // 60s Expired
   const handleRoundTimeExpired = () => {
     sound.playTimeout();
     setIsTimerRunning(false);
@@ -197,7 +205,7 @@ export const ForbiddenWordsTVView: React.FC = () => {
     broadcastSync({ phase: 'ROUND_RESULT', timeLeft: 0 });
   };
 
-  // Advance Next Turn (3 rounds per team = 6 turns total)
+  // Advance Next Turn
   const handleAdvanceNextTurn = () => {
     sound.playClick();
     const nextTeam: EshrahTeamId = activeTeam === 'team_1' ? 'team_2' : 'team_1';
@@ -214,18 +222,18 @@ export const ForbiddenWordsTVView: React.FC = () => {
       return;
     }
 
-    const newPrompt = getRandomPrompt(selectedCategories, usedPromptIds);
+    const newPrompt = getRandomPrompt(ALL_CATEGORIES, usedPromptIds);
     setUsedPromptIds((prev) => new Set([...prev, newPrompt.id]));
     setCurrentPrompt(newPrompt);
     setActiveTeam(nextTeam);
     setCurrentRound(nextRound);
     setCurrentRunCorrectCount(0);
     setTimeLeft(60);
-    setRecentNotification(null);
-    setPhase('ROUND_READY');
+    setIsTimerRunning(false);
+    setPhase('PREP_WORD');
 
     broadcastSync({
-      phase: 'ROUND_READY',
+      phase: 'PREP_WORD',
       activeTeam: nextTeam,
       currentRound: nextRound,
       prompt: newPrompt,
@@ -234,20 +242,9 @@ export const ForbiddenWordsTVView: React.FC = () => {
     });
   };
 
-  // Start Active 60s Round
-  const handleStartRound = () => {
-    sound.playRoundStart();
-    setTimeLeft(60);
-    setIsTimerRunning(true);
-    setCurrentRunCorrectCount(0);
-    setRecentNotification(null);
-    setPhase('PLAYING');
-    broadcastSync({ phase: 'PLAYING', timeLeft: 60, currentRunCorrectCount: 0 });
-  };
-
-  // Launch from Categories
+  // Launch Match from Lobby
   const handleLaunchMatch = () => {
-    const firstPrompt = getRandomPrompt(selectedCategories, usedPromptIds);
+    const firstPrompt = getRandomPrompt(ALL_CATEGORIES, usedPromptIds);
     setUsedPromptIds(new Set([firstPrompt.id]));
     setCurrentPrompt(firstPrompt);
     setActiveTeam('team_1');
@@ -256,10 +253,11 @@ export const ForbiddenWordsTVView: React.FC = () => {
     setTeam2Score(0);
     setCurrentRunCorrectCount(0);
     setTimeLeft(60);
-    setPhase('ROUND_READY');
+    setIsTimerRunning(false);
+    setPhase('PREP_WORD');
 
     broadcastSync({
-      phase: 'ROUND_READY',
+      phase: 'PREP_WORD',
       activeTeam: 'team_1',
       currentRound: 1,
       team1Score: 0,
@@ -270,9 +268,22 @@ export const ForbiddenWordsTVView: React.FC = () => {
     });
   };
 
+  // Universal End Room
+  const handleEndRoom = () => {
+    sound.playClick();
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'ROOM_TERMINATED',
+        payload: {}
+      });
+    }
+    navigate('/');
+  };
+
   return (
     <div className="min-h-screen bg-[#E5E0D5] flex flex-col font-sans select-none overflow-hidden relative" dir="rtl">
-      {/* Background static dot pattern */}
+      {/* Background static dots */}
       <div
         className="fixed inset-0 pointer-events-none opacity-40 z-0"
         style={{
@@ -287,188 +298,167 @@ export const ForbiddenWordsTVView: React.FC = () => {
           roomCode={roomCode}
           gameTitle="كلمات محظورة"
           phase={phase}
-          onTerminate={() => {
-            sound.playClick();
-            setPhase('TEAMS');
-            broadcastSync({ phase: 'TEAMS' });
-          }}
-          onExit={() => navigate('/')}
+          onTerminate={handleEndRoom}
+          onExit={handleEndRoom}
         />
       </div>
 
       <main className="flex-1 flex flex-col items-center justify-between p-4 md:p-6 relative z-10 max-w-6xl mx-auto w-full">
-        {/* ================= 1. TEAMS ================= */}
+        {/* ================= 1. TEAMS (LOBBY) ================= */}
         {phase === 'TEAMS' && (
           <div className="w-full flex-1 flex flex-col items-center justify-center my-auto">
-            <CleanTeamSelection
+            <EshrahTVLobby
+              roomCode={roomCode}
+              gameTitle="كلمات محظورة"
+              gameRuleSnippet="شرح سريع وتخمين أكبر عدد من الكلمات في 60 ثانية بدون نطق الكلمات الأربع الممنوعة! الشارح يمسك جواله لرؤية الكلمة والمحظورات ويسجل النقاط بنفسه."
               players={players}
-              isHost={true}
-              onJoinTeam={() => {}}
-              onConfirmTeams={() => {
-                sound.playClick();
-                setPhase('CATEGORIES');
-                broadcastSync({ phase: 'CATEGORIES' });
-              }}
-            />
-          </div>
-        )}
-
-        {/* ================= 2. CATEGORIES ================= */}
-        {phase === 'CATEGORIES' && (
-          <div className="w-full flex-1 flex flex-col items-center justify-center my-auto">
-            <CategoryPicker
-              selectedCategories={selectedCategories}
-              onChangeCategories={setSelectedCategories}
               onStartMatch={handleLaunchMatch}
-              onBackToTeams={() => {
-                sound.playClick();
-                setPhase('TEAMS');
-                broadcastSync({ phase: 'TEAMS' });
-              }}
             />
           </div>
         )}
 
-        {/* ================= 3. ROUND READY ================= */}
-        {phase === 'ROUND_READY' && (
+        {/* ================= 2. PREP WORD (EXPLAINER PREPARING) ================= */}
+        {phase === 'PREP_WORD' && (
           <div className="w-full flex-1 flex flex-col items-center justify-center gap-6 my-auto text-center max-w-xl">
-            <span className="text-xs font-black text-[#5C4033] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1.5 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
-              جولة السرعة {currentRound} من 3 ({activeTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'})
-            </span>
-
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
-              <h3 className="text-2xl font-black text-[#2C2A29]">
-                استعدوا لجولة تابو (60 ثانية)!
-              </h3>
-
-              <div className="text-xs font-bold text-[#5C4033] leading-relaxed max-w-md">
-                شارح <strong className="text-[#8A9A5B]">{activeTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'}</strong> يمسك الجوال لشرح أكبر عدد من الكلمات، بينما يراقب الفريق المنافس الكلمات المحظورة عبر جوالهم لاصطياد أي مخالفة!
-              </div>
-
-              <button
-                onClick={handleStartRound}
-                className="w-full py-4 mt-2 rounded-2xl font-black text-lg bg-[#8A9A5B] text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] hover:bg-[#78884e] transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Play size={20} />
-                <span>انطلاق جولة السرعة (60 ثانية)</span>
-              </button>
-            </div>
-
-            <div className="w-full flex justify-around items-center bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-3 shadow-[3px_3px_0px_#2C2A29]">
-              <span className="text-sm font-black text-[#8A9A5B]">الفريق الأول: {team1Score} pt</span>
-              <span className="text-xs text-[#5C4033]">|</span>
-              <span className="text-sm font-black text-[#C68B59]">الفريق الثاني: {team2Score} pt</span>
-            </div>
-          </div>
-        )}
-
-        {/* ================= 4. PLAYING (60s SPEED RUN) ================= */}
-        {phase === 'PLAYING' && (
-          <div className="w-full flex-1 flex flex-col items-center justify-between my-auto gap-6 max-w-3xl">
-            {/* Header Status */}
-            <div className="flex justify-between items-center w-full bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-4 shadow-[3px_3px_0px_#2C2A29]">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`w-3.5 h-3.5 rounded-full border border-[#2C2A29] ${
-                    activeTeam === 'team_1' ? 'bg-[#8A9A5B]' : 'bg-[#C68B59]'
-                  }`}
-                />
-                <span className="text-sm md:text-base font-black text-[#2C2A29]">
-                  الفريق الشارح: {activeTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Award size={18} className="text-[#8A9A5B]" />
-                <span className="text-sm font-black text-[#8A9A5B]">
-                  أحرزوا الآن: {currentRunCorrectCount} كلمات ✓
-                </span>
-              </div>
-            </div>
-
-            {/* Central Timer & Arena */}
-            <div className="flex flex-col items-center justify-center bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] rounded-3xl p-8 w-full text-center">
-              <span className="text-xs font-black text-[#5C4033] mb-2">الوقت المتبقي لجولة السرعة</span>
-              <div
-                className={`text-6xl md:text-8xl font-black font-mono tracking-tight ${
-                  timeLeft <= 10 ? 'text-[#C86D51]' : 'text-[#2C2A29]'
-                }`}
-              >
-                0:{timeLeft < 10 ? `0${timeLeft}` : timeLeft}
-              </div>
-
-              <div className="w-full h-3 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-full overflow-hidden mt-6 shadow-inner">
-                <div
-                  className={`h-full transition-all duration-1000 ease-linear ${
-                    timeLeft <= 10 ? 'bg-[#C86D51]' : 'bg-[#8A9A5B]'
-                  }`}
-                  style={{ width: `${(timeLeft / 60) * 100}%` }}
-                />
-              </div>
-
-              {/* Feed ticker */}
-              {recentNotification && (
-                <div className="mt-4 px-4 py-2 rounded-xl text-xs font-black border-2 border-[#2C2A29] inline-block shadow-sm">
-                  {recentNotification.type === 'HIT' && (
-                    <span className="text-[#8A9A5B]">✓ إجابة صحيحة لكلمة: {recentNotification.word} (+1 pt)</span>
-                  )}
-                  {recentNotification.type === 'VIOLATION' && (
-                    <span className="text-[#C86D51]">✗ مخالفة كلمة محظورة! تم استبعاد الكلمة (0 pt)</span>
-                  )}
-                  {recentNotification.type === 'SKIP' && (
-                    <span className="text-[#5C4033]">↻ تم تخطي الكلمة</span>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Score Strip */}
-            <div className="w-full flex justify-around items-center bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-3 shadow-[3px_3px_0px_#2C2A29]">
-              <span className="text-sm font-black text-[#8A9A5B]">الفريق الأول: {team1Score} pt</span>
-              <span className="text-xs text-[#5C4033]">الجولة {currentRound} / 3</span>
-              <span className="text-sm font-black text-[#C68B59]">الفريق الثاني: {team2Score} pt</span>
-            </div>
-          </div>
-        )}
-
-        {/* ================= 5. ROUND RESULT ================= */}
-        {phase === 'ROUND_RESULT' && (
-          <div className="w-full flex-1 flex flex-col items-center justify-center gap-6 my-auto text-center max-w-lg">
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
-              <span className="text-xs font-black text-[#5C4033] bg-[#E5E0D5] px-3 py-1 rounded-xl border border-[#2C2A29]">
-                انتهت 60 ثانية
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-black text-[#5C4033] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1.5 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
+                جولة {currentRound} من 3
               </span>
+              <span className={`text-xs font-black text-white px-4 py-1.5 rounded-xl border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] ${
+                activeTeam === 'team_1' ? 'bg-[#8A9A5B]' : 'bg-[#C68B59]'
+              }`}>
+                دور الشرح: {activeTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'}
+              </span>
+            </div>
 
-              <h3 className="text-2xl font-black text-[#2C2A29]">
-                {activeTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'} أحرز:{' '}
-                <span className="text-[#8A9A5B]">{currentRunCorrectCount} كلمات ✓</span>
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-8 shadow-[6px_6px_0px_#2C2A29] w-full flex flex-col items-center gap-5">
+              <div className="w-16 h-16 rounded-2xl bg-[#8A9A5B]/15 border-2 border-[#8A9A5B] flex items-center justify-center text-[#8A9A5B]">
+                <Clock className="w-8 h-8 animate-pulse" />
+              </div>
+
+              <h3 className="text-2xl md:text-3xl font-black text-[#2C2A29]">
+                الشارح يراجع الكلمة ويستعد...
               </h3>
 
-              <p className="text-xs font-bold text-[#5C4033]">
-                تمت إضافة +{currentRunCorrectCount} pt إلى رصيد الفريق!
+              <p className="text-sm font-bold text-[#5C4033] max-w-md leading-relaxed">
+                الكلمة والكلمات المحظورة معروضة على جوال الشارح ليأخذ وقته في التفكير.
+                الوقت يبدأ بالعد التنازلي (60 ثانية) فور ضغطه على <strong>[جاهز - ابدأ الوقت]</strong> في جواله!
               </p>
+
+              <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-2xl px-6 py-2.5 text-xs font-black text-[#2C2A29]">
+                ⏱️ مدة الجولة: 60 ثانية بعد الضغط على جاهز
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= 3. PLAYING (60s ACTIVE) ================= */}
+        {phase === 'PLAYING' && (
+          <div className="w-full flex-1 flex flex-col items-center justify-between my-auto gap-6 max-w-3xl text-center">
+            {/* Top Bar Status */}
+            <div className="flex items-center justify-between w-full">
+              <span className="text-xs font-black text-[#2C2A29] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1.5 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
+                جولة {currentRound} / 3
+              </span>
+              <div className={`px-4 py-1.5 rounded-xl border-2 border-[#2C2A29] font-black text-xs text-white shadow-[2px_2px_0px_#2C2A29] ${
+                activeTeam === 'team_1' ? 'bg-[#8A9A5B]' : 'bg-[#C68B59]'
+              }`}>
+                الفريق الشارح: {activeTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'}
+              </div>
+            </div>
+
+            {/* Giant Timer */}
+            <div className={`flex items-center justify-center gap-3 px-10 py-4 rounded-3xl border-2 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] ${
+              timeLeft <= 10 ? 'bg-[#C86D51] text-white animate-pulse' : 'bg-[#F7F4EC] text-[#2C2A29]'
+            }`}>
+              <Clock className="w-10 h-10" />
+              <span className="text-6xl font-black font-mono tracking-wider">
+                00:{timeLeft.toString().padStart(2, '0')}
+              </span>
+            </div>
+
+            {/* Central Score Streak Box */}
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-8 shadow-[6px_6px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
+              <div className="flex items-center gap-2 text-sm font-black text-[#8A9A5B]">
+                <Flame className="w-5 h-5 fill-current" />
+                <span>الكلمات الصحيحة في هذه الجولة</span>
+              </div>
+
+              <div className="text-6xl md:text-7xl font-black text-[#2C2A29]">
+                {currentRunCorrectCount}
+              </div>
+
+              <span className="text-xs font-bold text-[#5C4033] bg-[#E5E0D5] border border-[#2C2A29] px-4 py-1.5 rounded-xl">
+                الكلمات والمحظورات على جوال الشارح لمنع الغش بالصالة!
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* ================= 4. ROUND RESULT ================= */}
+        {phase === 'ROUND_RESULT' && (
+          <div className="w-full flex-1 flex flex-col items-center justify-center my-auto gap-6 max-w-lg text-center">
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-8 shadow-[6px_6px_0px_#2C2A29] w-full flex flex-col items-center gap-4">
+              <CheckCircle2 className="w-14 h-14 text-[#8A9A5B]" />
+              <h3 className="text-2xl font-black text-[#2C2A29]">
+                انتهت الـ 60 ثانية!
+              </h3>
+
+              <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-2xl p-4 w-full">
+                <span className="text-xs font-bold text-[#5C4033] block mb-1">
+                  أحرز {activeTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'}:
+                </span>
+                <span className="text-3xl font-black text-[#8A9A5B]">
+                  +{currentRunCorrectCount} pt
+                </span>
+              </div>
+
+              {/* Total Scores */}
+              <div className="grid grid-cols-2 gap-4 w-full">
+                <div className="bg-[#8A9A5B]/15 border-2 border-[#2C2A29] rounded-2xl p-3">
+                  <div className="text-xs font-bold text-[#2C2A29]">الفريق الأول</div>
+                  <div className="text-3xl font-black text-[#8A9A5B]">{team1Score} pt</div>
+                </div>
+                <div className="bg-[#C68B59]/15 border-2 border-[#2C2A29] rounded-2xl p-3">
+                  <div className="text-xs font-bold text-[#2C2A29]">الفريق الثاني</div>
+                  <div className="text-3xl font-black text-[#C68B59]">{team2Score} pt</div>
+                </div>
+              </div>
 
               <button
                 onClick={handleAdvanceNextTurn}
-                className="w-full py-3.5 mt-2 rounded-2xl font-black text-base bg-[#8A9A5B] text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] hover:bg-[#78884e] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full bg-[#8A9A5B] hover:bg-[#78884d] active:scale-98 text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl py-3.5 font-black text-lg transition-all mt-2 cursor-pointer"
               >
-                <span>الانتقال للدور التالي</span>
+                الدور التالي ➔
               </button>
             </div>
           </div>
         )}
 
-        {/* ================= 6. PODIUM ================= */}
+        {/* ================= 5. PODIUM ================= */}
         {phase === 'PODIUM' && (
-          <EshrahPodium
-            team1Score={team1Score}
-            team2Score={team2Score}
-            onPlayAgain={() => {
-              setPhase('TEAMS');
-              broadcastSync({ phase: 'TEAMS' });
-            }}
-            onBackToHome={() => navigate('/')}
-          />
+          <div className="w-full flex-1 flex flex-col items-center justify-center my-auto">
+            <EshrahPodium
+              team1Score={team1Score}
+              team2Score={team2Score}
+              onPlayAgain={() => {
+                sound.playClick();
+                handleLaunchMatch();
+              }}
+              onBackToHome={handleEndRoom}
+            />
+          </div>
+        )}
+
+        {/* Bottom scoreboard during gameplay */}
+        {phase !== 'PODIUM' && phase !== 'TEAMS' && (
+          <div className="w-full flex items-center justify-center gap-6 mt-4">
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl px-6 py-2 shadow-[3px_3px_0px_#2C2A29] flex items-center gap-6 text-sm font-black">
+              <span className="text-[#8A9A5B]">الفريق الأول: {team1Score} pt</span>
+              <span className="text-[#2C2A29]/30">|</span>
+              <span className="text-[#C68B59]">الفريق الثاني: {team2Score} pt</span>
+            </div>
+          </div>
         )}
       </main>
     </div>

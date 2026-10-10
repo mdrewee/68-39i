@@ -99,10 +99,10 @@ export const EshrahTopBar: React.FC<EshrahTopBarProps> = ({
         {/* Action Button: Strictly Ochre Orange (#C68B59), zero red */}
         <button
           onClick={handleExitClick}
-          className="flex items-center gap-1.5 bg-[#C68B59] text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-3.5 py-1.5 rounded-xl font-bold text-xs md:text-sm hover:bg-[#2C2A29] transition-colors cursor-pointer"
+          className="flex items-center gap-1.5 bg-[#C68B59] hover:bg-[#b0794b] active:scale-95 text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-3.5 py-1.5 rounded-xl font-bold text-xs md:text-sm transition-all cursor-pointer"
         >
           <LogOut size={15} />
-          <span>{phase === 'TEAMS' || phase === 'LOBBY' ? 'إنهاء الغرفة' : 'العودة للوبي'}</span>
+          <span>إنهاء اللعبة</span>
         </button>
       </div>
     </header>

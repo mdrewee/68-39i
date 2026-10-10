@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Check, ArrowRightLeft, SkipForward, Users, Sparkles, Trophy } from 'lucide-react';
+import { Check, ArrowRightLeft, Users, Trophy, Play, Clock, Sparkles } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { MobileTopBar } from '../../../components/MobileTopBar';
@@ -11,7 +11,6 @@ import {
   EshrahPromptItem,
   EshrahGamePhase
 } from '../../../types/eshrah';
-import { ESHRAH_CATEGORIES_CONFIG } from '../../../data/eshrahWordsBank';
 import { getOrCreatePlayerId, getOrCreatePlayerName } from '../../../utils/playerSession';
 import { sound } from '../../../lib/audio';
 
@@ -20,7 +19,6 @@ export const OneWordMobileView: React.FC = () => {
   const navigate = useNavigate();
   const roomCode = (rawCode || '000000').toUpperCase();
 
-  // Player identity
   const playerId = useMemo(() => getOrCreatePlayerId(), []);
   const playerName = useMemo(() => getOrCreatePlayerName(), []);
 
@@ -31,7 +29,7 @@ export const OneWordMobileView: React.FC = () => {
   const [currentRound, setCurrentRound] = useState<number>(1);
   const [currentPrompt, setCurrentPrompt] = useState<EshrahPromptItem | null>(null);
   const [activeTurnClueTeam, setActiveTurnClueTeam] = useState<EshrahTeamId>('team_1');
-  const [roundWinnerTeam, setRoundWinnerTeam] = useState<EshrahTeamId | null>(null);
+  const [turnTimeLeft, setTurnTimeLeft] = useState<number>(10);
   const [team1Score, setTeam1Score] = useState<number>(0);
   const [team2Score, setTeam2Score] = useState<number>(0);
 
@@ -74,9 +72,12 @@ export const OneWordMobileView: React.FC = () => {
         if (payload.currentRound) setCurrentRound(payload.currentRound);
         if (payload.prompt !== undefined) setCurrentPrompt(payload.prompt);
         if (payload.activeTurnClueTeam) setActiveTurnClueTeam(payload.activeTurnClueTeam);
-        if (payload.roundWinnerTeam !== undefined) setRoundWinnerTeam(payload.roundWinnerTeam);
+        if (payload.turnTimeLeft !== undefined) setTurnTimeLeft(payload.turnTimeLeft);
         if (payload.team1Score !== undefined) setTeam1Score(payload.team1Score);
         if (payload.team2Score !== undefined) setTeam2Score(payload.team2Score);
+      })
+      .on('broadcast', { event: 'ROOM_TERMINATED' }, () => {
+        navigate('/');
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
@@ -93,7 +94,7 @@ export const OneWordMobileView: React.FC = () => {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [roomCode, playerId, playerName, myTeamId]);
+  }, [roomCode, playerId, playerName, myTeamId, navigate]);
 
   // Handle joining team
   const handleJoinTeam = (teamId: EshrahTeamId) => {
@@ -113,21 +114,43 @@ export const OneWordMobileView: React.FC = () => {
     }
   };
 
-  // Dispatch Action
-  const sendAction = (action: 'WIN_TEAM_1' | 'WIN_TEAM_2' | 'PASS_CLUE_TURN' | 'SKIP_WORD') => {
-    sound.playClick();
+  // Ready click from mobile (starts the round)
+  const handleStartRound = () => {
+    sound.playRoundStart();
     if (channelRef.current) {
       channelRef.current.send({
         type: 'broadcast',
-        event: 'ONE_WORD_ACTION',
-        payload: { action }
+        event: 'EXPLAINER_READY_START',
+        payload: {}
       });
     }
   };
 
-  const categoryLabel = ESHRAH_CATEGORIES_CONFIG.find(
-    (c) => c.id === currentPrompt?.category
-  )?.label || 'عام';
+  // Single [جابوها ✓] Action
+  const handleOneWordGuessed = () => {
+    sound.playVictory();
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'ONE_WORD_GUESSED',
+        payload: {}
+      });
+    }
+  };
+
+  // Pass clue turn to other team
+  const handlePassClueTurn = () => {
+    sound.playClick();
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'PASS_CLUE_TURN',
+        payload: {}
+      });
+    }
+  };
+
+  const isMyTeamClue = myTeamId === activeTurnClueTeam;
 
   return (
     <div className="min-h-screen bg-[#E5E0D5] flex flex-col font-sans select-none overflow-x-hidden relative" dir="rtl">
@@ -149,7 +172,7 @@ export const OneWordMobileView: React.FC = () => {
       </div>
 
       <main className="flex-1 flex flex-col p-4 relative z-10 max-w-lg mx-auto w-full">
-        {/* ================= 1. TEAMS ================= */}
+        {/* ================= 1. TEAMS (LOBBY SELECTION ON MOBILE) ================= */}
         {phase === 'TEAMS' && (
           <div className="flex-1 flex flex-col items-center justify-center my-auto w-full">
             <div className="text-center mb-6">
@@ -169,138 +192,101 @@ export const OneWordMobileView: React.FC = () => {
           </div>
         )}
 
-        {/* ================= 2. CATEGORIES WAITING ================= */}
-        {phase === 'CATEGORIES' && (
-          <div className="flex-1 flex flex-col items-center justify-center text-center my-auto gap-4">
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] w-full">
-              <Sparkles className="w-12 h-12 text-[#C68B59] mx-auto mb-3" />
-              <h3 className="text-xl font-black text-[#2C2A29] mb-2">اختيار الفئات</h3>
-              <p className="text-sm font-bold text-[#5C4033]">
-                مضيف اللعبة يحدد فئات الكلمات على شاشة التلفزيون...
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* ================= 3. ROUND READY ================= */}
-        {phase === 'ROUND_READY' && (
-          <div className="flex-1 flex flex-col items-center justify-center text-center my-auto gap-4">
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] w-full">
-              <span className="text-xs font-black text-[#5C4033] bg-[#E5E0D5] border-2 border-[#2C2A29] px-3 py-1 rounded-xl shadow-[2px_2px_0px_#2C2A29] inline-block mb-3">
+        {/* ================= 2. PREP WORD (STANDBY) ================= */}
+        {phase === 'PREP_WORD' && (
+          <div className="flex-1 flex flex-col justify-between gap-4 my-auto w-full">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-[#2C2A29] bg-[#F7F4EC] border-2 border-[#2C2A29] px-3 py-1.5 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
                 جولة {currentRound} من 5
               </span>
-              <h3 className="text-2xl font-black text-[#2C2A29] mb-2">استعد للمواجهة!</h3>
-              <p className="text-sm font-bold text-[#5C4033] mb-4">
-                ممثل من كل فريق يقف أمام الشاشة ويمسك جواله لرؤية الكلمة السرية المشتركة.
-              </p>
-              <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-2xl p-4 text-xs font-bold text-[#2C2A29]">
-                الفئة المختارة: <span className="font-black text-[#C68B59]">{categoryLabel}</span>
+              <span className="text-xs font-black text-[#8A9A5B] bg-[#8A9A5B]/15 border border-[#8A9A5B] px-3 py-1.5 rounded-xl">
+                مواجهة مشتركة
+              </span>
+            </div>
+
+            {/* Secret Word Card */}
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] flex flex-col items-center text-center gap-3">
+              <span className="text-xs font-bold text-[#5C4033]">الكلمة السرية للمواجهة:</span>
+              <div className="text-4xl md:text-5xl font-black text-[#2C2A29] tracking-wide my-3">
+                {currentPrompt?.text || '...'}
+              </div>
+              <div className="bg-[#E5E0D5]/70 border border-[#2C2A29]/20 rounded-2xl p-3 text-xs font-bold text-[#5C4033] w-full text-right space-y-1">
+                <p>• ممثل من كل فريق يرى نفس الكلمة الآن.</p>
+                <p>• مسموح بكلمة واحدة فقط كتلميح لكل دور (10 ثوانٍ للدور).</p>
+                <p>• أول فريق في الصالة يخمن الكلمة اضغط [جابوها] فوراً!</p>
               </div>
             </div>
+
+            {/* Ready Button */}
+            <button
+              onClick={handleStartRound}
+              className="w-full bg-[#8A9A5B] hover:bg-[#78884d] active:scale-98 text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl py-4 flex items-center justify-center gap-2 font-black text-lg transition-all cursor-pointer"
+            >
+              <Play className="w-6 h-6 fill-white" />
+              <span>جاهز - ابدأ الجولة (10 ثوانٍ للدور)</span>
+            </button>
           </div>
         )}
 
-        {/* ================= 4. PLAYING ================= */}
+        {/* ================= 3. PLAYING (10s ACTIVE CLUE TURN) ================= */}
         {phase === 'PLAYING' && (
           <div className="flex-1 flex flex-col justify-between gap-4 my-auto w-full">
-            {/* Round info & clue turn banner */}
+            {/* Top Bar Status */}
             <div className="flex items-center justify-between">
               <span className="text-xs font-black text-[#2C2A29] bg-[#F7F4EC] border-2 border-[#2C2A29] px-3 py-1.5 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
                 جولة {currentRound} / 5
               </span>
-              <div className={`px-4 py-1.5 rounded-xl border-2 border-[#2C2A29] font-black text-xs shadow-[2px_2px_0px_#2C2A29] ${
-                activeTurnClueTeam === 'team_1' ? 'bg-[#8A9A5B] text-white' : 'bg-[#C68B59] text-white'
+
+              {/* 10s Timer */}
+              <div className={`flex items-center gap-2 px-4 py-1.5 rounded-xl border-2 border-[#2C2A29] font-black shadow-[2px_2px_0px_#2C2A29] ${
+                turnTimeLeft <= 3 ? 'bg-[#C86D51] text-white animate-pulse' : 'bg-[#F7F4EC] text-[#2C2A29]'
               }`}>
-                دور التلميح الآن: {activeTurnClueTeam === 'team_1' ? 'فريق 1' : 'فريق 2'}
+                <Clock className="w-4 h-4" />
+                <span className="font-mono text-base">00:{turnTimeLeft.toString().padStart(2, '0')}</span>
               </div>
             </div>
 
-            {/* Secret Word Card (Revealed on phone for representatives) */}
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[6px_6px_0px_#2C2A29] flex flex-col items-center text-center">
-              <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] px-4 py-1 rounded-xl text-xs font-bold text-[#5C4033] mb-3">
-                الفئة: {categoryLabel}
-              </div>
+            {/* Turn Clue Banner */}
+            <div className={`p-3 rounded-2xl border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] text-center font-black text-sm text-white ${
+              activeTurnClueTeam === 'team_1' ? 'bg-[#8A9A5B]' : 'bg-[#C68B59]'
+            }`}>
+              دور التلميح الآن: {activeTurnClueTeam === 'team_1' ? 'الفريق الأول' : 'الفريق الثاني'}
+              {isMyTeamClue ? ' (فريقك يلمّح ويخمّن!)' : ' (استمع للمنافس!)'}
+            </div>
+
+            {/* Secret Word Card */}
+            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] flex flex-col items-center text-center">
               <span className="text-xs font-bold text-[#5C4033] mb-1">الكلمة السرية المشتركة:</span>
               <div className="text-4xl md:text-5xl font-black text-[#2C2A29] tracking-wide my-3">
                 {currentPrompt?.text || '...'}
               </div>
               <p className="text-xs font-bold text-[#5C4033] mt-2 bg-[#E5E0D5]/60 border border-[#2C2A29]/20 px-3 py-1.5 rounded-xl">
-                ⚠️ مسموح بكلمة واحدة فقط كتلميح لكل دور! التلميح ينتقل بين الفريقين.
+                ⚠️ كلمة واحدة فقط كتلميح! إذا انتهت الـ 10 ثوانٍ ينتقل الدور تلقائياً.
               </p>
             </div>
 
-            {/* Verification and Clue Turn Controls */}
+            {/* Single [جابوها ✓] Scoring Button + Pass Turn */}
             <div className="flex flex-col gap-3">
-              {/* Correct Buttons */}
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => sendAction('WIN_TEAM_1')}
-                  className="bg-[#8A9A5B] hover:bg-[#78884d] active:scale-95 text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl py-3.5 px-3 flex flex-col items-center justify-center gap-1 transition-all"
-                >
-                  <Check className="w-6 h-6 stroke-[3]" />
-                  <span className="font-black text-sm">فريق 1 جاوب صح!</span>
-                  <span className="text-[11px] font-bold opacity-90">(+1 pt)</span>
-                </button>
-
-                <button
-                  onClick={() => sendAction('WIN_TEAM_2')}
-                  className="bg-[#C68B59] hover:bg-[#b0794b] active:scale-95 text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl py-3.5 px-3 flex flex-col items-center justify-center gap-1 transition-all"
-                >
-                  <Check className="w-6 h-6 stroke-[3]" />
-                  <span className="font-black text-sm">فريق 2 جاوب صح!</span>
-                  <span className="text-[11px] font-bold opacity-90">(+1 pt)</span>
-                </button>
-              </div>
-
-              {/* Clue Turn Pass Button */}
               <button
-                onClick={() => sendAction('PASS_CLUE_TURN')}
-                className="w-full bg-[#F7F4EC] hover:bg-white active:scale-98 text-[#2C2A29] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl py-3 px-4 flex items-center justify-center gap-2 font-black text-sm transition-all"
+                onClick={handleOneWordGuessed}
+                className="w-full bg-[#8A9A5B] hover:bg-[#78884d] active:scale-98 text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl py-4 flex items-center justify-center gap-2 font-black text-xl transition-all cursor-pointer"
               >
-                <ArrowRightLeft className="w-5 h-5" />
+                <Check className="w-7 h-7 stroke-[3]" />
+                <span>جابوها صح! (+1 pt والتالي)</span>
+              </button>
+
+              <button
+                onClick={handlePassClueTurn}
+                className="w-full bg-[#F7F4EC] hover:bg-white active:scale-98 text-[#2C2A29] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-xl py-2.5 px-3 flex items-center justify-center gap-2 font-bold text-xs transition-all cursor-pointer"
+              >
+                <ArrowRightLeft className="w-4 h-4" />
                 <span>تمرير دور التلميح للفريق الآخر</span>
               </button>
-
-              {/* Skip Word */}
-              <button
-                onClick={() => sendAction('SKIP_WORD')}
-                className="w-full bg-[#E5E0D5] hover:bg-[#d8d2c5] active:scale-98 text-[#5C4033] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-xl py-2 px-3 flex items-center justify-center gap-2 font-bold text-xs transition-all"
-              >
-                <SkipForward className="w-4 h-4" />
-                <span>تخطي الكلمة وتغييرها</span>
-              </button>
             </div>
           </div>
         )}
 
-        {/* ================= 5. ROUND RESULT ================= */}
-        {phase === 'ROUND_RESULT' && (
-          <div className="flex-1 flex flex-col items-center justify-center text-center my-auto gap-4">
-            <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] w-full">
-              <Trophy className="w-12 h-12 text-[#8A9A5B] mx-auto mb-2" />
-              <h3 className="text-2xl font-black text-[#2C2A29] mb-1">
-                {roundWinnerTeam === 'team_1' ? 'فريق 1 كسب النقطة! 🎉' : 'فريق 2 كسب النقطة! 🎉'}
-              </h3>
-              <p className="text-sm font-bold text-[#5C4033] mb-4">
-                الكلمة كانت: <span className="font-black text-[#2C2A29] underline">{currentPrompt?.text}</span>
-              </p>
-
-              {/* Current Score Cards */}
-              <div className="grid grid-cols-2 gap-3 mt-4">
-                <div className="bg-[#8A9A5B]/15 border-2 border-[#2C2A29] rounded-2xl p-3">
-                  <div className="text-xs font-bold text-[#2C2A29]">فريق 1</div>
-                  <div className="text-2xl font-black text-[#8A9A5B]">{team1Score} pt</div>
-                </div>
-                <div className="bg-[#C68B59]/15 border-2 border-[#2C2A29] rounded-2xl p-3">
-                  <div className="text-xs font-bold text-[#2C2A29]">فريق 2</div>
-                  <div className="text-2xl font-black text-[#C68B59]">{team2Score} pt</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ================= 6. PODIUM ================= */}
+        {/* ================= 4. PODIUM ================= */}
         {phase === 'PODIUM' && (
           <div className="flex-1 flex flex-col items-center justify-center text-center my-auto gap-4">
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] w-full">
@@ -311,11 +297,11 @@ export const OneWordMobileView: React.FC = () => {
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-[#8A9A5B] text-white border-2 border-[#2C2A29] rounded-2xl p-3">
-                  <div className="text-xs font-bold">فريق 1</div>
+                  <div className="text-xs font-bold">الفريق الأول</div>
                   <div className="text-2xl font-black">{team1Score} pt</div>
                 </div>
                 <div className="bg-[#C68B59] text-white border-2 border-[#2C2A29] rounded-2xl p-3">
-                  <div className="text-xs font-bold">فريق 2</div>
+                  <div className="text-xs font-bold">الفريق الثاني</div>
                   <div className="text-2xl font-black">{team2Score} pt</div>
                 </div>
               </div>
