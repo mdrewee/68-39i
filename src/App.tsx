@@ -41,6 +41,11 @@ export function App() {
         <Route path="/room/:code/tourism-tv" element={<TVScreenView />} />
         <Route path="/room/:code/tourism-play" element={<PlayerMobileView />} />
 
+        {/* Words Suite - Kalim Stack */}
+        <Route path="/room/:code/words/kalim-stack" element={<PlayerMobileView />} />
+        <Route path="/room/:code/words/kalim-stack-play" element={<PlayerMobileView />} />
+        <Route path="/room/:code/words/kalim-stack-tv" element={<TVScreenView />} />
+
         {/* Words Suite - Scattergories */}
         <Route path="/room/:code/words/scattergories" element={<PlayerMobileView />} />
         <Route path="/room/:code/words/scattergories-play" element={<PlayerMobileView />} />

@@ -227,6 +227,19 @@ export const GAME_CATEGORIES: GameCategory[] = [
     tag: 'لغة وتحدي',
     modes: [
       {
+        id: 'kalim-stack',
+        title: 'كَلِم',
+        subtitle: 'تبديل وتكديس الحروف الثلاثية وتصفير اليد',
+        description: 'كلمة ثلاثية في الأرض ومعك 7 كروت.. بدّل حرف وكوّن كلمة جديدة من المعجم، وأول من يصفّر كروته يفوز!',
+        minPlayers: 2,
+        maxPlayers: 12,
+        roundDurationMinutes: 5,
+        tag: 'جديد',
+        category: 'words',
+        icon: 'Layers',
+        badgeColor: 'olive',
+      },
+      {
         id: 'scattergories',
         title: 'اسم جماد نبات',
         subtitle: 'التحدي الكلاسيكي بفئات عصرية',

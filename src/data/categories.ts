@@ -55,6 +55,13 @@ export const CATEGORIES_REGISTRY: CategoryItem[] = [
     color: '#8A9A5B',
     games: [
       {
+        id: 'kalim-stack',
+        title: 'كَلِم',
+        description: 'كلمة ثلاثية في الأرض ومعك 7 كروت.. بدّل حرف وكوّن كلمة جديدة من المعجم، وأول من يصفّر كروته يفوز!',
+        route: '/room/:code/words/kalim-stack',
+        icon: 'Layers',
+      },
+      {
         id: 'scattergories',
         title: 'اسم جماد نبات',
         description: 'التحدي الكلاسيكي بفئات عصرية واختيار وتحكيم يدوي من المضيف',
