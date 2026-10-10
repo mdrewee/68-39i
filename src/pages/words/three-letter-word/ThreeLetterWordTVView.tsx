@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { Play, Clock, X, Trophy } from 'lucide-react';
+import { Play, Clock, X, Trophy, RotateCcw, LogOut } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { ThreeLetterTopBar } from './components/ThreeLetterTopBar';
@@ -15,7 +15,8 @@ import {
 } from './types';
 import {
   generateInitialBoard,
-  validateWordPlacement
+  validateWordPlacement,
+  isValidThreeLetterWord
 } from './utils/threeLetterDictionary';
 import { sound } from '../../../lib/audio';
 
@@ -30,10 +31,11 @@ export const ThreeLetterWordTVView: React.FC = () => {
   const [board, setBoard] = useState<[BoardSlotState, BoardSlotState, BoardSlotState]>(() => generateInitialBoard());
   const [activePlayerIndex, setActivePlayerIndex] = useState<number>(0);
   const [turnNumber, setTurnNumber] = useState<number>(1);
-  const [turnTimeLeft, setTurnTimeLeft] = useState<number>(7); // 7s for turn 1, 5s afterwards
+  const [turnTimeLeft, setTurnTimeLeft] = useState<number>(7);
   const [maxTurnTime, setMaxTurnTime] = useState<number>(7);
   const [lastNotification, setLastNotification] = useState<TurnEventNotification | null>(null);
   const [winner, setWinner] = useState<ThreeLetterPlayer | null>(null);
+  const [winningWord, setWinningWord] = useState<string | null>(null);
 
   // Lobby start countdown
   const [lobbyStartCountdown, setLobbyStartCountdown] = useState<number | null>(null);
@@ -57,7 +59,8 @@ export const ThreeLetterWordTVView: React.FC = () => {
     targetPlayers: ThreeLetterPlayer[],
     targetActiveIndex: number,
     targetTurnNumber: number,
-    notification?: TurnEventNotification | null
+    notification?: TurnEventNotification | null,
+    wWord?: string | null
   ) => {
     if (!channelRef.current) return;
     channelRef.current.send({
@@ -70,10 +73,66 @@ export const ThreeLetterWordTVView: React.FC = () => {
         activePlayerId: targetPlayers[targetActiveIndex]?.id || null,
         activePlayerIndex: targetActiveIndex,
         turnNumber: targetTurnNumber,
-        notification: notification || null
+        notification: notification || null,
+        winningWord: wWord || null
       }
     });
   }, []);
+
+  // Handle Turn Timeout on TV
+  const handleTurnTimeout = useCallback(() => {
+    if (phase !== 'GAMEPLAY') return;
+    const currentActive = playersRef.current[activeIndexRef.current];
+    if (!currentActive) return;
+
+    sound.playTimeout();
+
+    const updatedPlayers = playersRef.current.map((p, idx) => {
+      if (idx === activeIndexRef.current) {
+        return { ...p, cardsCount: p.cardsCount + 1 };
+      }
+      return p;
+    });
+
+    const notif: TurnEventNotification = {
+      playerId: currentActive.id,
+      playerName: currentActive.name,
+      type: 'TIMEOUT',
+      timestamp: Date.now()
+    };
+    setLastNotification(notif);
+
+    const nextTurnNum = turnNumberRef.current + 1;
+    const nextIndex = (activeIndexRef.current + 1) % updatedPlayers.length;
+    setTurnNumber(nextTurnNum);
+    setActivePlayerIndex(nextIndex);
+    setPlayers(updatedPlayers);
+    const nextTime = 5;
+    setMaxTurnTime(nextTime);
+    setTurnTimeLeft(nextTime);
+
+    broadcastSync('GAMEPLAY', boardRef.current, updatedPlayers, nextIndex, nextTurnNum, notif);
+  }, [phase, broadcastSync]);
+
+  // Turn Timer Interval
+  useEffect(() => {
+    if (phase !== 'GAMEPLAY') return;
+
+    const interval = setInterval(() => {
+      setTurnTimeLeft((prev) => {
+        if (prev <= 1) {
+          handleTurnTimeout();
+          return 5;
+        }
+        if (prev <= 3) {
+          sound.playTick();
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [phase, activePlayerIndex, turnNumber, handleTurnTimeout]);
 
   // 1. Setup Supabase Realtime Channel
   useEffect(() => {
@@ -103,7 +162,6 @@ export const ThreeLetterWordTVView: React.FC = () => {
           });
         });
 
-        // Deduplicate
         const uniqueMap = new Map<string, ThreeLetterPlayer>();
         active.forEach((p) => {
           const existing = playersRef.current.find((pl) => pl.id === p.id);
@@ -125,7 +183,19 @@ export const ThreeLetterWordTVView: React.FC = () => {
         handlePlayerAttempt(payload);
       })
       .on('broadcast', { event: 'DRAW_PASS_TURN' }, ({ payload }) => {
-        handlePlayerPass(payload?.playerId);
+        handlePlayerPass(payload?.playerId, payload?.isTimeout);
+      })
+      .on('broadcast', { event: 'kalim_event' }, ({ payload }) => {
+        if (payload?.action === 'MATCH_WIN') {
+          handleRemoteMatchWin(payload);
+        } else if (payload?.action === 'TIMEOUT_PASS') {
+          handlePlayerPass(payload?.playerId, true);
+        } else if (payload?.action === 'DRAW_PASS') {
+          handlePlayerPass(payload?.playerId, false);
+        }
+      })
+      .on('broadcast', { event: 'MATCH_WIN' }, ({ payload }) => {
+        handleRemoteMatchWin(payload);
       })
       .subscribe();
 
@@ -135,17 +205,65 @@ export const ThreeLetterWordTVView: React.FC = () => {
     };
   }, [roomCode]);
 
+  // Handle Remote Match Win
+  const handleRemoteMatchWin = (payload: any) => {
+    sound.playVictory();
+    const winningPl = playersRef.current.find((p) => p.id === payload.winnerId) || {
+      id: payload.winnerId,
+      name: payload.winnerName,
+      cardsCount: 0
+    };
+    setWinner(winningPl);
+    setWinningWord(payload.winningWord || null);
+    setPhase('ROUND_WIN');
+
+    const updated = playersRef.current.map((p) =>
+      p.id === payload.winnerId ? { ...p, cardsCount: 0 } : p
+    );
+    setPlayers(updated);
+  };
+
   // Handle Player's Single Attempt Move (Instant Win on 0 Cards)
-  const handlePlayerAttempt = (payload: { playerId: string; slotIndex: 0 | 1 | 2; card: ThreeLetterCardItem }) => {
-    const { playerId, slotIndex, card } = payload;
+  const handlePlayerAttempt = (payload: { playerId: string; slotIndex: 0 | 1 | 2; card: ThreeLetterCardItem; isInvalid?: boolean; candidateWord?: string }) => {
+    const { playerId, slotIndex, card, isInvalid } = payload;
     const currentActive = playersRef.current[activeIndexRef.current];
 
     if (!currentActive || currentActive.id !== playerId) return;
 
+    if (isInvalid) {
+      sound.playIncorrect();
+      const updatedPlayers = playersRef.current.map((p) => {
+        if (p.id === playerId) {
+          return { ...p, cardsCount: p.cardsCount + 1 };
+        }
+        return p;
+      });
+
+      const notif: TurnEventNotification = {
+        playerId,
+        playerName: currentActive.name,
+        newLetter: card.letter,
+        type: 'INVALID_PENALTY',
+        timestamp: Date.now()
+      };
+      setLastNotification(notif);
+
+      const nextTurnNum = turnNumberRef.current + 1;
+      const nextIndex = (activeIndexRef.current + 1) % updatedPlayers.length;
+      setTurnNumber(nextTurnNum);
+      setActivePlayerIndex(nextIndex);
+      setPlayers(updatedPlayers);
+      const nextTime = 5;
+      setMaxTurnTime(nextTime);
+      setTurnTimeLeft(nextTime);
+
+      broadcastSync('GAMEPLAY', boardRef.current, updatedPlayers, nextIndex, nextTurnNum, notif);
+      return;
+    }
+
     const validation = validateWordPlacement(boardRef.current, slotIndex, card.letter);
 
     if (validation.isValid) {
-      // Valid Word Move
       sound.playCorrect();
 
       const oldSlot = boardRef.current[slotIndex];
@@ -184,10 +302,10 @@ export const ThreeLetterWordTVView: React.FC = () => {
       if (playerAfterMove && playerAfterMove.cardsCount === 0) {
         sound.playVictory();
         setWinner(playerAfterMove);
+        setWinningWord(validation.resultingWord);
         setPhase('ROUND_WIN');
         setPlayers(updatedPlayers);
 
-        // Broadcast match win across realtime channel
         if (channelRef.current) {
           channelRef.current.send({
             type: 'broadcast',
@@ -195,11 +313,12 @@ export const ThreeLetterWordTVView: React.FC = () => {
             payload: {
               winnerId: playerAfterMove.id,
               winnerName: playerAfterMove.name,
+              winningWord: validation.resultingWord,
               players: updatedPlayers
             }
           });
         }
-        broadcastSync('ROUND_WIN', newBoard, updatedPlayers, activeIndexRef.current, turnNumberRef.current, notif);
+        broadcastSync('ROUND_WIN', newBoard, updatedPlayers, activeIndexRef.current, turnNumberRef.current, notif, validation.resultingWord);
         return;
       }
 
@@ -209,16 +328,14 @@ export const ThreeLetterWordTVView: React.FC = () => {
       setTurnNumber(nextTurnNum);
       setActivePlayerIndex(nextIndex);
       setPlayers(updatedPlayers);
-      const nextTime = 5; // strictly 5s for subsequent turns
+      const nextTime = 5;
       setMaxTurnTime(nextTime);
       setTurnTimeLeft(nextTime);
 
       broadcastSync('GAMEPLAY', newBoard, updatedPlayers, nextIndex, nextTurnNum, notif);
     } else {
-      // Invalid Word / Banned Form Played -> Penalty + Turn Ends Immediately
       sound.playIncorrect();
 
-      // Add 1 penalty card
       const updatedPlayers = playersRef.current.map((p) => {
         if (p.id === playerId) {
           return { ...p, cardsCount: p.cardsCount + 1 };
@@ -236,7 +353,6 @@ export const ThreeLetterWordTVView: React.FC = () => {
       };
       setLastNotification(notif);
 
-      // Advance turn immediately
       const nextTurnNum = turnNumberRef.current + 1;
       const nextIndex = (activeIndexRef.current + 1) % updatedPlayers.length;
       setTurnNumber(nextTurnNum);
@@ -251,13 +367,16 @@ export const ThreeLetterWordTVView: React.FC = () => {
   };
 
   // Handle Player Pass / Draw
-  const handlePlayerPass = (playerId: string) => {
+  const handlePlayerPass = (playerId: string, isTimeout?: boolean) => {
     const currentActive = playersRef.current[activeIndexRef.current];
     if (!currentActive || currentActive.id !== playerId) return;
 
-    sound.playClick();
+    if (isTimeout) {
+      sound.playTimeout();
+    } else {
+      sound.playClick();
+    }
 
-    // Add 1 card to player
     const updatedPlayers = playersRef.current.map((p) => {
       if (p.id === playerId) {
         return { ...p, cardsCount: p.cardsCount + 1 };
@@ -268,7 +387,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
     const notif: TurnEventNotification = {
       playerId,
       playerName: currentActive.name,
-      type: 'DRAW_PASS',
+      type: isTimeout ? 'TIMEOUT' : 'DRAW_PASS',
       timestamp: Date.now()
     };
     setLastNotification(notif);
@@ -285,62 +404,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
     broadcastSync('GAMEPLAY', boardRef.current, updatedPlayers, nextIndex, nextTurnNum, notif);
   };
 
-  // Handle Timeout (Auto-draw and pass)
-  const handleTurnTimeout = useCallback(() => {
-    if (phase !== 'GAMEPLAY') return;
-    const currentActive = playersRef.current[activeIndexRef.current];
-    if (!currentActive) return;
-
-    sound.playTimeout();
-
-    const updatedPlayers = playersRef.current.map((p, idx) => {
-      if (idx === activeIndexRef.current) {
-        return { ...p, cardsCount: p.cardsCount + 1 };
-      }
-      return p;
-    });
-
-    const notif: TurnEventNotification = {
-      playerId: currentActive.id,
-      playerName: currentActive.name,
-      type: 'TIMEOUT',
-      timestamp: Date.now()
-    };
-    setLastNotification(notif);
-
-    const nextTurnNum = turnNumberRef.current + 1;
-    const nextIndex = (activeIndexRef.current + 1) % updatedPlayers.length;
-    setTurnNumber(nextTurnNum);
-    setActivePlayerIndex(nextIndex);
-    setPlayers(updatedPlayers);
-    const nextTime = 5;
-    setMaxTurnTime(nextTime);
-    setTurnTimeLeft(nextTime);
-
-    broadcastSync('GAMEPLAY', boardRef.current, updatedPlayers, nextIndex, nextTurnNum, notif);
-  }, [phase, broadcastSync]);
-
-  // Turn Timer Interval (strictly 7s on turn 1, 5s on subsequent turns)
-  useEffect(() => {
-    if (phase !== 'GAMEPLAY') return;
-
-    const interval = setInterval(() => {
-      setTurnTimeLeft((prev) => {
-        if (prev <= 1) {
-          handleTurnTimeout();
-          return 5;
-        }
-        if (prev <= 3) {
-          sound.playTick();
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [phase, activePlayerIndex, turnNumber, handleTurnTimeout]);
-
-  // Lobby Auto-Start Countdown (>= 2 ready players)
+  // Lobby Auto-Start Countdown
   const readyCount = useMemo(() => players.filter((p) => p.isReady).length, [players]);
 
   useEffect(() => {
@@ -379,9 +443,10 @@ export const ThreeLetterWordTVView: React.FC = () => {
     setPhase('GAMEPLAY');
     setActivePlayerIndex(0);
     setTurnNumber(1);
-    setMaxTurnTime(7); // 7s on turn 1
+    setMaxTurnTime(7);
     setTurnTimeLeft(7);
     setWinner(null);
+    setWinningWord(null);
     setLastNotification(null);
 
     if (channelRef.current) {
@@ -452,7 +517,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
         }}
       />
 
-      {/* Top Bar (Always visible exit/end button in Ochre) */}
+      {/* Top Bar */}
       <div className="relative z-20">
         <ThreeLetterTopBar
           roomCode={roomCode}
@@ -466,7 +531,6 @@ export const ThreeLetterWordTVView: React.FC = () => {
         {/* ================= 1. LOBBY PHASE ================= */}
         {phase === 'LOBBY' && (
           <div className="w-full flex-1 flex flex-col items-center justify-center gap-6 my-auto">
-            {/* Header Banner */}
             <div className="text-center">
               <span className="text-xs md:text-sm font-black text-[#5C4033] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1 rounded-xl shadow-[2px_2px_0px_#2C2A29] inline-block mb-2">
                 لعبة كروت وتكديس سريعة
@@ -476,9 +540,8 @@ export const ThreeLetterWordTVView: React.FC = () => {
               </h2>
             </div>
 
-            {/* Split Grid: QR Code + Players List + Rules */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
-              {/* Box 1: QR Code & Room Code */}
+              {/* Box 1: QR Code */}
               <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-5 flex flex-col items-center justify-center text-center">
                 <span className="text-xs font-black text-[#5C4033] mb-3">امسح الكود أو ادخل الرمز للمشاركة</span>
                 <div className="bg-white p-3 rounded-xl border-2 border-[#2C2A29] shadow-sm mb-3">
@@ -542,7 +605,6 @@ export const ThreeLetterWordTVView: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Auto-Start Banner / Manual Start Button */}
                 <div className="mt-4 pt-3 border-t border-[#2C2A29]/15">
                   {lobbyStartCountdown !== null ? (
                     <div className="w-full bg-[#8A9A5B] text-white font-black text-center py-3 rounded-xl border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29]">
@@ -565,7 +627,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Box 3: Game Rules Guide */}
+              {/* Box 3: Rules Guide */}
               <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-5 flex flex-col text-right">
                 <span className="text-sm font-black text-[#2C2A29] mb-3">طريقة لعب كلمة ثلاثية:</span>
                 <ul className="space-y-2.5 text-xs font-bold text-[#5C4033] leading-relaxed">
@@ -579,7 +641,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-[#8A9A5B] font-black">3.</span>
-                    <span>الكلمات المقبولة: أسماء وأفعال فقط (ممنوع الحروف وأدوات الاستفهام).</span>
+                    <span>الكلمات المقبولة: أسماء وأفعال فقط (ممنوع الحروف وأدوات الاستفهام والأمر).</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-[#8A9A5B] font-black">4.</span>
@@ -594,7 +656,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
         {/* ================= 2. GAMEPLAY PHASE ================= */}
         {phase === 'GAMEPLAY' && (
           <div className="w-full flex-1 flex flex-col justify-between items-center gap-6 my-auto">
-            {/* Top Center Lightning Timer & Active Turn Header */}
+            {/* Top Center Lightning Timer */}
             <div className="w-full max-w-xl flex flex-col items-center gap-2">
               <div className="w-full flex justify-between items-center px-2">
                 <div className="flex items-center gap-2">
@@ -612,7 +674,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Draining Timer Progress Bar */}
+              {/* Progress Bar */}
               <div className="w-full h-3 bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-full overflow-hidden shadow-[2px_2px_0px_#2C2A29]">
                 <div
                   className={`h-full transition-all duration-1000 ease-linear ${
@@ -623,7 +685,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
               </div>
             </div>
 
-            {/* Notification Toast (Move result or penalty) */}
+            {/* Notification Toast */}
             {lastNotification && (
               <div
                 className={`text-xs md:text-sm font-black px-4 py-2 rounded-xl border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] ${
@@ -649,7 +711,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
               </div>
             )}
 
-            {/* Centered Clean Arena (STRICTLY the 3 physical cards - ZERO sub-labels) */}
+            {/* Clean Arena */}
             <div className="flex justify-center items-center gap-6 md:gap-14 py-4">
               {board.map((slot, idx) => (
                 <div key={idx} className="transition-transform duration-200">
@@ -661,7 +723,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
               ))}
             </div>
 
-            {/* Bottom Players Arena Ring */}
+            {/* Players Ring */}
             <div className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-4 shadow-[4px_4px_0px_#2C2A29] max-w-5xl">
               <div className="flex justify-between items-center mb-3">
                 <span className="text-xs font-black text-[#5C4033]">اللاعبون والكروت المتبقية:</span>
@@ -702,7 +764,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
           </div>
         )}
 
-        {/* ================= 3. INSTANT WIN / PODIUM PHASE ================= */}
+        {/* ================= 3. INSTANT WIN / VICTORY PRESENTATION ================= */}
         {(phase === 'ROUND_WIN' || phase === 'PODIUM') && (
           <div className="w-full flex-1 flex flex-col items-center justify-center text-center gap-6 my-auto max-w-xl">
             <div className="w-24 h-24 rounded-3xl bg-[#8A9A5B] border-2 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] flex items-center justify-center text-white text-5xl">
@@ -711,19 +773,23 @@ export const ThreeLetterWordTVView: React.FC = () => {
 
             <div>
               <span className="text-xs font-black text-[#5C4033] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
-                حسم المباراة
+                حسم الفوز الفوري
               </span>
               <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29] mt-3">
                 {winner?.name} بطل الكلمة الثلاثية!
               </h2>
               <p className="text-sm md:text-base font-bold text-[#8A9A5B] mt-2">
-                تخلّص من جميع كروته بنجاح وحسم المباراة!
+                {winningWord ? (
+                  <span>أنهى جميع كروته بنجاح بكلمة: <strong className="text-[#2C2A29] underline">({winningWord})</strong></span>
+                ) : (
+                  <span>تخلّص من جميع كروته بنجاح وحسم المباراة!</span>
+                )}
               </p>
             </div>
 
             {/* Standings */}
             <div className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-5 shadow-[4px_4px_0px_#2C2A29]">
-              <span className="text-xs font-black text-[#5C4033] block mb-3 text-right">الترتيب النهائي:</span>
+              <span className="text-xs font-black text-[#5C4033] block mb-3 text-right">الترتيب النهائي للكروت:</span>
               <div className="space-y-2">
                 {players
                   .slice()
@@ -732,7 +798,7 @@ export const ThreeLetterWordTVView: React.FC = () => {
                     <div
                       key={p.id}
                       className={`flex justify-between items-center p-3 rounded-xl border-2 border-[#2C2A29] ${
-                        p.cardsCount === 0
+                        p.cardsCount === 0 || p.id === winner?.id
                           ? 'bg-[#8A9A5B] text-white shadow-[2px_2px_0px_#2C2A29]'
                           : 'bg-[#E5E0D5] text-[#2C2A29]'
                       }`}
@@ -742,19 +808,30 @@ export const ThreeLetterWordTVView: React.FC = () => {
                         <span className="font-black text-sm md:text-base">{p.name}</span>
                       </div>
                       <span className="text-xs md:text-sm font-bold">
-                        {p.cardsCount === 0 ? 'بطل اللعبة' : `${p.cardsCount} كروت متبقية`}
+                        {p.cardsCount === 0 || p.id === winner?.id ? 'بطل اللعبة' : `${p.cardsCount} كروت متبقية`}
                       </span>
                     </div>
                   ))}
               </div>
             </div>
 
-            <button
-              onClick={handleTerminateGame}
-              className="w-full bg-[#C68B59] text-white py-4 rounded-2xl font-black text-lg border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] hover:bg-[#2C2A29] transition-all cursor-pointer"
-            >
-              العودة للوبي الرئيسي
-            </button>
+            {/* Action Buttons: Host Olivine Restart & Ochre End Session */}
+            <div className="w-full flex gap-3">
+              <button
+                onClick={startGame}
+                className="flex-1 bg-[#8A9A5B] text-white py-3.5 rounded-2xl font-black text-base border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] hover:bg-[#2C2A29] transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <RotateCcw size={18} />
+                <span>بدء جولة جديدة</span>
+              </button>
+              <button
+                onClick={handleEndRoom}
+                className="flex-1 bg-[#C68B59] text-white py-3.5 rounded-2xl font-black text-base border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] hover:bg-[#2C2A29] transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <LogOut size={18} />
+                <span>إنهاء الجلسة</span>
+              </button>
+            </div>
           </div>
         )}
       </main>

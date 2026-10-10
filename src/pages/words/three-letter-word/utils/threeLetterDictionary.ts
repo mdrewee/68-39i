@@ -1,5 +1,8 @@
-import { arabicDict, normalizeArabic } from '../../../../utils/arabicDictionary';
+import { arabicDict } from '../../../../utils/arabicDictionary';
 import { ThreeLetterCardItem, BoardSlotState, MoveAttemptResult } from '../types';
+import { verifiedThreeLetterWordsSet, normalizeArabicWord } from '../data/verifiedThreeLetterWords';
+
+export { normalizeArabicWord };
 
 export const RETRO_CARD_PALETTE = [
   '#C86D51', // Terracotta Rust
@@ -28,68 +31,36 @@ export const BANNED_PARTICLES_AND_COMMANDS = new Set([
   'عسى', 'ربت', 'بين', 'فوق', 'تحت', 'لدن', 'منذ', 'مذ', 'قبل', 'بعد',
   'معي', 'معك', 'لنا', 'لكم', 'لهم', 'منه', 'منها', 'فيهم', 'عنهم',
   'هذا', 'هذه', 'هنا', 'هناك', 'التي', 'الذي', 'متى', 'اين', 'أين', 'ايان',
-  'هيا', 'مهلا', 'صهل',
-  // 3-letter imperatives and particles:
+  'هيا', 'مهلا', 'صهل', 'عما', 'بما', 'كما', 'لما', 'فما', 'فمن', 'وعن',
+  'ففي', 'وبك', 'ولك', 'فلك', 'فمن', 'ومن', 'وهل', 'فهل', 'ولن', 'فلن',
+  // Imperative verbs (أفعال الأمر)
   'اكتب', 'اخرج', 'اشرب', 'العب', 'اقفز', 'اسمع', 'انظر', 'ارسم', 'ادخل',
   'قف', 'نم', 'قل', 'زر', 'بع', 'سر', 'ضع', 'دع', 'خذ', 'كل', 'صل', 'سل'
 ]);
 
-// Massive vetted bank of authentic 3-letter Arabic nouns & past/present verbs (أسماء وأفعال ماضية ومضارعة)
-export const VETTED_THREE_LETTER_WORDS: string[] = [
-  'كتب', 'علم', 'نصر', 'ذهب', 'حمد', 'شكر', 'ملك', 'حكم',
-  'درس', 'صنع', 'قفل', 'فتح', 'رسم', 'جمع', 'طرد', 'قصد',
-  'بحر', 'شمس', 'قمر', 'نجم', 'عقل', 'قلب', 'صوت', 'نور',
-  'سعد', 'وصل', 'وقف', 'فهم', 'حفظ', 'زرع', 'شرب', 'اكل',
-  'ضرب', 'نظر', 'طلب', 'عرف', 'عقد', 'نقل', 'صبر', 'فرح',
-  'سبح', 'قطع', 'رفع', 'وضع', 'سكن', 'دخل', 'خرج', 'رجع',
-  'غرس', 'حصد', 'بنى', 'هدم', 'سأل', 'أجاب', 'وجد', 'فقد',
-  'ربح', 'خسر', 'نصح', 'مدح', 'ذم', 'شهد', 'سمع', 'بصر',
-  'نطق', 'صمت', 'ركب', 'نزل', 'دفع', 'سحب', 'حمل', 'وضع',
-  'خلق', 'رزق', 'بعث', 'حشر', 'غفر', 'رحم', 'ستر', 'كرم',
-  'جود', 'فخر', 'عز', 'مجد', 'شرف', 'نبل', 'صدق', 'عدل',
-  'ظلم', 'قهر', 'غلب', 'هزم', 'صلح', 'فسد', 'طهر', 'نجس',
-  'خبز', 'طبخ', 'عجن', 'طحن', 'غسل', 'كوى', 'خاط', 'لبس',
-  'خلع', 'ستر', 'كشف', 'ظهر', 'خفي', 'كتم', 'باح', 'سرر',
-  'نهر', 'جبل', 'سهل', 'وادي', 'غاب', 'شجر', 'ثمر', 'زهر',
-  'ورد', 'عشب', 'نخل', 'تمر', 'عنب', 'تين', 'رمان', 'زيت',
-  'لحم', 'طير', 'سمك', 'وحش', 'سبع', 'فهد', 'نمر', 'اسد',
-  'ذئب', 'ثعلب', 'ضبع', 'غزال', 'ظبي', 'وعل', 'جمل', 'ناقة',
-  'فرس', 'مهر', 'حمار', 'بغل', 'ثور', 'بقر', 'غنم', 'ماعز',
-  'كبش', 'حمل', 'كلب', 'قط', 'فأر', 'جرد', 'قرد', 'فيل',
-  'صقر', 'نسر', 'عقاب', 'غراب', 'حمام', 'يمام', 'بلبل', 'هدهد',
-  'نحل', 'نمل', 'فراش', 'ذباب', 'بعوض', 'عنكب', 'عقرب', 'حية',
-  'ثعبان', 'ضفدع', 'سلحف', 'تمساح', 'حوت', 'قرش', 'دولف', 'سردين',
-  'سيف', 'رمح', 'قوس', 'سهم', 'درع', 'خوذة', 'ترس', 'خنجر',
-  'قلم', 'حبر', 'ورق', 'جلد', 'لوح', 'خط', 'نقش', 'رقم',
-  'بيت', 'دار', 'قصر', 'كوخ', 'خيمة', 'غرفة', 'باب', 'نافذة',
-  'سقف', 'جدار', 'عمود', 'بساط', 'فرش', 'وسادة', 'سرير', 'كرسي',
-  'قدر', 'صحن', 'كوب', 'كأس', 'ابريق', 'ملعقة', 'سكين', 'موقد',
-  'سوق', 'دكان', 'متجر', 'مال', 'ذهب', 'فضة', 'نحاس', 'حديد',
-  'حجر', 'طين', 'رمل', 'تراب', 'غبار', 'دخان', 'نار', 'لهب',
-  'رماد', 'شرر', 'جليد', 'ثلج', 'مطر', 'سحاب', 'غيم', 'ضباب',
-  'ريح', 'عاصف', 'نسيم', 'حر', 'برد', 'دفء', 'ظل', 'ضوء',
-  'ظلام', 'ليل', 'نهار', 'فجر', 'صبح', 'ظهر', 'عصر', 'مغرب',
-  'عشاء', 'سحر', 'غسق', 'شفق', 'سنة', 'شهر', 'يوم', 'ساعة',
-  'حلم', 'رؤيا', 'فكر', 'ظن', 'شك', 'يقين', 'علم', 'جهل',
-  'حكم', 'رشد', 'ضلال', 'هدى', 'حق', 'باطل', 'خير', 'شر',
-  'نفع', 'ضر', 'ألم', 'وجع', 'سقم', 'مرض', 'شفاء', 'دواء'
-];
-
-// Normalize and compile set for instant lookup
-const VETTED_SET = new Set(VETTED_THREE_LETTER_WORDS.map((w) => normalizeArabic(w)));
-
+// Strict Arabic 3-letter word check
 export const isValidThreeLetterWord = (candidate: string): boolean => {
-  const norm = normalizeArabic(candidate);
-  if (norm.length !== 3) return false;
-  if (BANNED_PARTICLES_AND_COMMANDS.has(norm) || BANNED_PARTICLES_AND_COMMANDS.has(candidate)) {
+  if (!candidate) return false;
+
+  const normalized = normalizeArabicWord(candidate);
+  if (normalized.length !== 3) return false;
+
+  // Reject banned particles, prepositions, imperatives
+  if (BANNED_PARTICLES_AND_COMMANDS.has(normalized) || BANNED_PARTICLES_AND_COMMANDS.has(candidate)) {
     return false;
   }
 
-  // Check fast vetted set first
-  if (VETTED_SET.has(norm)) return true;
+  // 1. Check verified authentic 3-letter words set
+  if (verifiedThreeLetterWordsSet.has(normalized)) {
+    return true;
+  }
 
-  // Fallback to full dictionary if valid 3-letter word
-  return arabicDict.isValid(norm, 3);
+  // 2. Strict dictionary check: must strictly be an existing 3-letter word
+  if (arabicDict.isValid(normalized, 3) || arabicDict.isValid(candidate, 3)) {
+    return true;
+  }
+
+  return false;
 };
 
 export const getRandomCardColor = (exclude?: string): string => {
@@ -153,7 +124,7 @@ export const validateWordPlacement = (
   // Construct resulting 3-letter word
   const letters = currentBoard.map((slot, idx) => (idx === slotIndex ? newLetter : slot.topCard.letter));
   const candidateWord = letters.join('');
-  const normCandidate = normalizeArabic(candidateWord);
+  const normCandidate = normalizeArabicWord(candidateWord);
 
   // Check identical letter on same slot
   if (currentBoard[slotIndex].topCard.letter === newLetter) {

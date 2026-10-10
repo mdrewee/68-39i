@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Layers, AlertCircle, Trophy } from 'lucide-react';
+import { Layers, AlertCircle, Trophy, Clock } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { MobileTopBar } from '../../../components/MobileTopBar';
@@ -16,7 +16,8 @@ import {
 import {
   generateInitialBoard,
   generateInitialHand,
-  validateWordPlacement
+  validateWordPlacement,
+  isValidThreeLetterWord
 } from './utils/threeLetterDictionary';
 import { getOrCreatePlayerId, getOrCreatePlayerName } from '../../../utils/playerSession';
 import { sound } from '../../../lib/audio';
@@ -36,13 +37,14 @@ export const ThreeLetterWordMobileView: React.FC = () => {
   const [board, setBoard] = useState<[BoardSlotState, BoardSlotState, BoardSlotState]>(() => generateInitialBoard());
   const [activePlayerId, setActivePlayerId] = useState<string | null>(null);
   const [turnNumber, setTurnNumber] = useState<number>(1);
+  const [turnTimeLeft, setTurnTimeLeft] = useState<number>(7);
   const [hand, setHand] = useState<ThreeLetterCardItem[]>(() => generateInitialHand(8));
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [isEvaluatingMove, setIsEvaluatingMove] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [players, setPlayers] = useState<ThreeLetterPlayer[]>([]);
   const [lastNotification, setLastNotification] = useState<TurnEventNotification | null>(null);
-  const [winner, setWinner] = useState<{ id: string; name: string } | null>(null);
+  const [winner, setWinner] = useState<{ id: string; name: string; winningWord?: string } | null>(null);
 
   // Channel & state refs
   const channelRef = useRef<RealtimeChannel | null>(null);
@@ -50,13 +52,76 @@ export const ThreeLetterWordMobileView: React.FC = () => {
   const isReadyRef = useRef(isReady);
   const boardRef = useRef(board);
   const isEvaluatingRef = useRef(isEvaluatingMove);
+  const activePlayerIdRef = useRef(activePlayerId);
 
   useEffect(() => { handRef.current = hand; }, [hand]);
   useEffect(() => { isReadyRef.current = isReady; }, [isReady]);
   useEffect(() => { boardRef.current = board; }, [board]);
   useEffect(() => { isEvaluatingRef.current = isEvaluatingMove; }, [isEvaluatingMove]);
+  useEffect(() => { activePlayerIdRef.current = activePlayerId; }, [activePlayerId]);
 
   const isMyTurn = activePlayerId === playerId && phase === 'GAMEPLAY' && !isEvaluatingMove;
+
+  // Turn Timeout Auto-Action
+  const handleTurnTimeout = useCallback(async () => {
+    if (activePlayerIdRef.current !== playerId || isEvaluatingRef.current) return;
+
+    setIsEvaluatingMove(true);
+    sound.playTimeout();
+
+    // 1. Draw random penalty card locally
+    const penaltyCard = generateInitialHand(1)[0];
+    const updatedHand = [...handRef.current, penaltyCard];
+    setHand(updatedHand);
+    setSelectedCardId(null);
+    setErrorMessage('انتهى الوقت! تم سحب كرت عقوبة وتمرير الدور.');
+
+    // 2. Broadcast timeout event
+    if (channelRef.current) {
+      await channelRef.current.send({
+        type: 'broadcast',
+        event: 'DRAW_PASS_TURN',
+        payload: {
+          playerId,
+          isTimeout: true,
+          newCardsCount: updatedHand.length
+        }
+      });
+      await channelRef.current.send({
+        type: 'broadcast',
+        event: 'kalim_event',
+        payload: {
+          action: 'TIMEOUT_PASS',
+          playerId,
+          newCardsCount: updatedHand.length
+        }
+      });
+    }
+  }, [playerId]);
+
+  // Turn Timer Interval (7s on turn 1, 5s on subsequent turns)
+  useEffect(() => {
+    if (!isMyTurn || phase !== 'GAMEPLAY') return;
+
+    const initialTime = turnNumber === 1 ? 7 : 5;
+    setTurnTimeLeft(initialTime);
+
+    const interval = setInterval(() => {
+      setTurnTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          handleTurnTimeout();
+          return 0;
+        }
+        if (prev <= 3) {
+          sound.playTick();
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isMyTurn, phase, turnNumber, handleTurnTimeout]);
 
   // 1. Setup Supabase Realtime Channel
   useEffect(() => {
@@ -89,7 +154,6 @@ export const ThreeLetterWordMobileView: React.FC = () => {
           });
         });
 
-        // Deduplicate
         const unique = Array.from(new Map(active.map((p) => [p.id, p])).values());
         setPlayers(unique);
       })
@@ -106,14 +170,21 @@ export const ThreeLetterWordMobileView: React.FC = () => {
         if (payload.notification) setLastNotification(payload.notification);
         if (payload.phase === 'ROUND_WIN' && payload.players) {
           const w = payload.players.find((p: ThreeLetterPlayer) => p.cardsCount === 0);
-          if (w) setWinner({ id: w.id, name: w.name });
+          if (w) setWinner({ id: w.id, name: w.name, winningWord: payload.winningWord });
         }
       })
       .on('broadcast', { event: 'MATCH_WIN' }, ({ payload }) => {
         if (payload) {
           setPhase('ROUND_WIN');
-          setWinner({ id: payload.winnerId, name: payload.winnerName });
+          setWinner({ id: payload.winnerId, name: payload.winnerName, winningWord: payload.winningWord });
           if (payload.players) setPlayers(payload.players);
+          sound.playVictory();
+        }
+      })
+      .on('broadcast', { event: 'kalim_event' }, ({ payload }) => {
+        if (payload?.action === 'MATCH_WIN') {
+          setPhase('ROUND_WIN');
+          setWinner({ id: payload.winnerId, name: payload.winnerName, winningWord: payload.winningWord });
           sound.playVictory();
         }
       })
@@ -196,8 +267,8 @@ export const ThreeLetterWordMobileView: React.FC = () => {
     setSelectedCardId((prev) => (prev === cardId ? null : cardId));
   };
 
-  // Single Attempt Move Placement
-  const handlePlaceCardOnSlot = (slotIndex: 0 | 1 | 2) => {
+  // Single Attempt Move Placement (Guaranteed Instant Win on 0 Cards)
+  const handlePlaceCardOnSlot = async (slotIndex: 0 | 1 | 2) => {
     if (!isMyTurn || isEvaluatingMove) {
       if (!isMyTurn) setErrorMessage('ليس دورك الآن!');
       sound.playIncorrect();
@@ -219,34 +290,62 @@ export const ThreeLetterWordMobileView: React.FC = () => {
     const validation = validateWordPlacement(board, slotIndex, cardToPlay.letter);
 
     if (validation.isValid) {
-      // Valid move
+      // Valid Move
       sound.playCorrect();
       setErrorMessage(null);
 
-      // 1. Remove card from local hand
-      const nextHand = hand.filter((c) => c.id !== selectedCardId);
-      setHand(nextHand);
+      // 1. Calculate updated hand synchronously
+      const updatedHand = hand.filter((c) => c.id !== selectedCardId);
+      setHand(updatedHand);
       setSelectedCardId(null);
 
-      // CRITICAL: Instant Win on 0 Cards
-      if (nextHand.length === 0) {
+      // 2. CHECK WIN CONDITION IMMEDIATELY (Zero Cards)
+      if (updatedHand.length === 0) {
         sound.playVictory();
         setPhase('ROUND_WIN');
-        setWinner({ id: playerId, name: playerName });
-      }
+        setWinner({ id: playerId, name: playerName, winningWord: validation.resultingWord });
 
-      // 2. Broadcast attempt
-      if (channelRef.current) {
-        channelRef.current.send({
+        // Broadcast instant win immediately across realtime channel
+        await channelRef.current?.send({
           type: 'broadcast',
-          event: 'PLAY_CARD_ATTEMPT',
+          event: 'MATCH_WIN',
           payload: {
-            playerId,
+            winnerId: playerId,
+            winnerName: playerName,
+            winningWord: validation.resultingWord,
             slotIndex,
-            card: cardToPlay
+            playedCard: cardToPlay
           }
         });
+
+        await channelRef.current?.send({
+          type: 'broadcast',
+          event: 'kalim_event',
+          payload: {
+            action: 'MATCH_WIN',
+            winnerId: playerId,
+            winnerName: playerName,
+            winningWord: validation.resultingWord,
+            slotIndex,
+            playedCard: cardToPlay
+          }
+        });
+
+        setIsEvaluatingMove(false);
+        return;
       }
+
+      // Normal Move: Broadcast card play
+      await channelRef.current?.send({
+        type: 'broadcast',
+        event: 'PLAY_CARD_ATTEMPT',
+        payload: {
+          playerId,
+          slotIndex,
+          card: cardToPlay,
+          candidateWord: validation.resultingWord
+        }
+      });
     } else {
       // Invalid word move -> draw 1 penalty card, single shot failed, turn ends!
       sound.playIncorrect();
@@ -254,22 +353,21 @@ export const ThreeLetterWordMobileView: React.FC = () => {
 
       // Add penalty card to local hand
       const penaltyCard = generateInitialHand(1)[0];
-      const nextHand = [...hand, penaltyCard];
-      setHand(nextHand);
+      const updatedHand = [...hand, penaltyCard];
+      setHand(updatedHand);
       setSelectedCardId(null);
 
       // Broadcast invalid attempt
-      if (channelRef.current) {
-        channelRef.current.send({
-          type: 'broadcast',
-          event: 'PLAY_CARD_ATTEMPT',
-          payload: {
-            playerId,
-            slotIndex,
-            card: cardToPlay
-          }
-        });
-      }
+      await channelRef.current?.send({
+        type: 'broadcast',
+        event: 'PLAY_CARD_ATTEMPT',
+        payload: {
+          playerId,
+          slotIndex,
+          card: cardToPlay,
+          isInvalid: true
+        }
+      });
     }
   };
 
@@ -285,7 +383,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
   };
 
   // Draw Penalty / Pass Turn Button
-  const handlePassTurn = () => {
+  const handlePassTurn = async () => {
     if (!isMyTurn || isEvaluatingMove) return;
 
     sound.playClick();
@@ -295,14 +393,19 @@ export const ThreeLetterWordMobileView: React.FC = () => {
 
     // Draw 1 card
     const drawn = generateInitialHand(1)[0];
-    const nextHand = [...hand, drawn];
-    setHand(nextHand);
+    const updatedHand = [...hand, drawn];
+    setHand(updatedHand);
 
     if (channelRef.current) {
-      channelRef.current.send({
+      await channelRef.current.send({
         type: 'broadcast',
         event: 'DRAW_PASS_TURN',
-        payload: { playerId }
+        payload: { playerId, newCardsCount: updatedHand.length }
+      });
+      await channelRef.current.send({
+        type: 'broadcast',
+        event: 'kalim_event',
+        payload: { action: 'DRAW_PASS', playerId, newCardsCount: updatedHand.length }
       });
     }
   };
@@ -328,7 +431,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
         }}
       />
 
-      {/* Top Bar (Always shows Ochre exit button in LOBBY and all phases) */}
+      {/* Top Bar (Always shows Ochre exit button) */}
       <div className="relative z-20">
         <MobileTopBar
           roomCode={roomCode}
@@ -390,7 +493,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
         {/* ================= 2. GAMEPLAY PHASE ================= */}
         {phase === 'GAMEPLAY' && (
           <div className="flex-1 flex flex-col justify-between gap-2 w-full">
-            {/* Active Turn Header & Dynamic Ticker */}
+            {/* Active Turn Header & Dynamic Timer Ticker */}
             <div
               className={`w-full p-2.5 rounded-2xl border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] text-center transition-all ${
                 isMyTurn
@@ -399,8 +502,12 @@ export const ThreeLetterWordMobileView: React.FC = () => {
               }`}
             >
               {isMyTurn ? (
-                <div className="flex items-center justify-center gap-2">
-                  <span className="text-sm md:text-base">🎯 دورك الآن! اختر كرت ثم انقر على الكرت بالساحة لتغييره</span>
+                <div className="flex items-center justify-between px-2">
+                  <span className="text-sm md:text-base">🎯 دورك الآن! انقر على الكرت بالساحة لتغييره</span>
+                  <div className="flex items-center gap-1 bg-white/20 px-2 py-0.5 rounded-lg text-xs font-mono font-black">
+                    <Clock size={13} />
+                    <span>0:0{turnTimeLeft}</span>
+                  </div>
                 </div>
               ) : (
                 <div className="text-xs text-[#5C4033]">
@@ -417,7 +524,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
               </div>
             )}
 
-            {/* Top Section: Board Target Slots (CLEAN - Zero sublabels) */}
+            {/* Top Section: Board Target Slots (CLEAN) */}
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-2.5 shadow-[4px_4px_0px_#2C2A29] w-full">
               <div className="flex justify-between items-center mb-1.5 px-2">
                 <span className="text-xs font-black text-[#5C4033]">ساحة الكلمة الثلاثية:</span>
@@ -426,7 +533,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
                 </span>
               </div>
 
-              {/* 3 Active Physical Slots (Completely Clean) */}
+              {/* 3 Active Physical Slots */}
               <div className="flex justify-center items-center gap-3 sm:gap-6 my-1">
                 {board.map((slot, idx) => {
                   const pos = idx as 0 | 1 | 2;
@@ -451,14 +558,14 @@ export const ThreeLetterWordMobileView: React.FC = () => {
               )}
             </div>
 
-            {/* Bottom Section: Edge-to-Edge Massive Cards (WITHOUT CONTAINER BOX) */}
+            {/* Bottom Section: Edge-to-Edge Huge Cards (NO CONTAINER BOX) */}
             <div className="w-full flex flex-col items-center my-auto py-1">
               <div className="w-full flex justify-between items-center mb-1 px-2">
                 <span className="text-xs font-black text-[#2C2A29]">كروتك في اليد ({hand.length}):</span>
                 <span className="text-[10px] font-bold text-[#5C4033]">المتبقي للتصفير: {hand.length}</span>
               </div>
 
-              {/* Row 1 (Edge to Edge, Large Cascading Cards) */}
+              {/* Row 1 */}
               <div className="flex justify-center items-center -space-x-4 space-x-reverse py-1 w-full overflow-x-visible px-1">
                 {handRow1.map((card) => (
                   <div key={card.id} className="shrink-0 transition-transform duration-150">
@@ -474,7 +581,7 @@ export const ThreeLetterWordMobileView: React.FC = () => {
                 ))}
               </div>
 
-              {/* Row 2 (if cards exist) */}
+              {/* Row 2 */}
               {handRow2.length > 0 && (
                 <div className="flex justify-center items-center -space-x-4 space-x-reverse py-1 mt-1 w-full overflow-x-visible px-1">
                   {handRow2.map((card) => (
@@ -526,7 +633,9 @@ export const ThreeLetterWordMobileView: React.FC = () => {
                 {winner?.id === playerId ? 'مبروك! أنت بطل الكلمة الثلاثية!' : `الفائز: ${winner?.name || 'لاعب'}`}
               </h2>
               <p className="text-sm font-bold text-[#8A9A5B] mt-1">
-                {winner?.id === playerId ? 'تخلصت من جميع كروتك الثمانية بنجاح!' : 'تم حسم الفوز وتصفير الكروت!'}
+                {winner?.winningWord
+                  ? `أنهى جميع كروته بكلمة (${winner.winningWord})`
+                  : 'تخلّص من جميع كروته بنجاح وحسم الفوز!'}
               </p>
             </div>
 
