@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: #DDD5C7;
+  }
+
+  /* Tactile custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #F1EDE4;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #C4BAA3;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #8C867A;
+  }
+}
+
+/* Global Micro-Interaction: Tactile elevation on hover (يرتفع قليلاً عند وضع الماوس) */
+.tactile-elevate {
+  transition: transform 150ms ease-out, box-shadow 150ms ease-out, background-color 150ms ease;
+}
+.tactile-elevate:hover {
+  transform: translateY(-4px);
+}
+.tactile-elevate:active {
+  transform: translateY(0);
+}
+
+/* Tactile Physical Button & Card Classes (يرتفع قليلاً عند التحويم بالماوس) */
+.btn-tactile-primary {
+  @apply bg-olive-500 text-sand-50 font-bold border-2 border-ink-950 rounded-tactile shadow-tactile transition-all duration-150 ease-out disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none hover:bg-olive-600 hover:-translate-y-0.5 hover:shadow-tactile-md active:translate-y-0 active:bg-olive-700;
+}
+
+.btn-tactile-secondary {
+  @apply bg-ochre-500 text-sand-50 font-bold border-2 border-ink-950 rounded-tactile shadow-tactile transition-all duration-150 ease-out disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none hover:bg-ochre-600 hover:-translate-y-0.5 hover:shadow-tactile-md active:translate-y-0 active:bg-ochre-700;
+}
+
+.btn-tactile-ghost {
+  @apply bg-sand-200 text-ink-950 font-semibold border-2 border-ink-950 rounded-tactile shadow-tactile-sm transition-all duration-150 ease-out hover:bg-sand-300 hover:-translate-y-0.5 hover:shadow-tactile active:translate-y-0 active:bg-sand-400;
+}
+
+.card-tactile {
+  @apply bg-sand-50 border-2 border-ink-950 rounded-tactile shadow-tactile transition-all duration-150;
+}
+
+.card-tactile-dark {
+  @apply bg-ink-900 border-2 border-ink-800 text-sand-50 rounded-tactile shadow-tactile;
+}
+
+/* Comfortable Muted Warm-Slate/Linen Background (#E5E0D5) */
+.bg-grain {
+  background-color: #E5E0D5;
+  background-image: radial-gradient(#C8C1B2 0.75px, transparent 0.75px);
+  background-size: 24px 24px;
+}
+
+.bg-grain-dark {
+  background-color: #1F1E1B;
+  background-image: radial-gradient(#2B2823 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.bg-warm-sand {
+  background-color: #E5E0D5;
+  background-image: radial-gradient(rgba(44, 42, 41, 0.04) 1.5px, transparent 1.5px);
+  background-size: 24px 24px;
+}
+
+
+/* Ochre Orange Tactile Button with jump animation */
+.btn-tactile-orange {
+  @apply bg-[#C68B59] text-white font-bold border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl transition-all duration-150 ease-out hover:bg-[#2C2A29] hover:text-[#E5E0D5] hover:-translate-y-1 active:translate-y-0.5 active:shadow-[1px_1px_0px_#2C2A29];
+}
+
+@keyframes stampImpact {
+  0% {
+    opacity: 0;
+    transform: scale(2.2) rotate(-25deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(-12deg);
+  }
+}

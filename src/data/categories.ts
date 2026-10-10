@@ -1,0 +1,117 @@
+export interface GameItem {
+  id: string;
+  title: string;
+  description: string;
+  route: string;
+  icon?: string;
+}
+
+export interface CategoryItem {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  color: string;
+  games: GameItem[];
+}
+
+export const CATEGORIES_REGISTRY: CategoryItem[] = [
+  {
+    id: 'ai',
+    title: 'ذكاء اصطناعي',
+    description: 'تحديات الذكاء الاصطناعي ومحاكمات الـ AI التفاعلية',
+    icon: 'Scale',
+    color: '#8A9A5B',
+    games: [
+      {
+        id: 'conspiracy-maker',
+        title: 'صانع المؤامرة',
+        description: 'حدثين عشوائيين مالهم دخل ببعض.. والمطلوب منك تسك خطوط مؤامرة سرية ترتبط بينهم والـ AI يقيّم ملفك السري!',
+        route: '/room/:code/ai/conspiracy-maker',
+        icon: 'FileText',
+      },
+      {
+        id: 'the-scammer',
+        title: 'النصاب',
+        description: 'منتج غريب ومطلوب منك تصرفه على زبون AI شكّاك.. أقنعه يرفع السوم وأعلى بياع تنعرض محادثته بالشاشة!',
+        route: '/room/:code/ai/the-scammer',
+        icon: 'Gavel',
+      },
+      {
+        id: 'ai-lawyer',
+        title: 'المحامي الـ AI',
+        description: 'قضية تورط الكل ومطلوب منك ترقع لنفسك.. والقاضي يحلل عذرك ويجلد ترقيعك!',
+        route: '/room/:code/ai/ai-lawyer',
+        icon: 'Scale',
+      },
+    ],
+  },
+
+  {
+    id: 'words',
+    title: 'كلمات',
+    description: 'تحديات لغوية وسرعة بديهة وتنافس مباشر في الكلمات',
+    icon: 'BookOpen',
+    color: '#8A9A5B',
+    games: [
+      {
+        id: 'scattergories',
+        title: 'اسم جماد نبات',
+        description: 'التحدي الكلاسيكي بفئات عصرية واختيار وتحكيم يدوي من المضيف',
+        route: '/room/:code/words/scattergories',
+        icon: 'Sparkles',
+      },
+      {
+        id: 'wordle-rush',
+        title: 'سباق ووردل',
+        description: 'سباق تخمين لحظي؛ أول من يفك الكلمة السرية يفوز بالجولة',
+        route: '/room/:code/words/wordle-rush',
+        icon: 'Layers',
+      },
+      {
+        id: 'pentagon-clash',
+        title: 'خلية الخماسيات',
+        description: '6 أشكال خماسية؛ كوّن كلماتك واخطفها قبل باقي المتسابقين',
+        route: '/room/:code/words/pentagon-clash',
+        icon: 'Hexagon',
+      },
+    ],
+  },
+  {
+    id: 'geography',
+    title: 'فئة الجغرافيا',
+    description: 'تحديات الألوان والخرائط الدقيقة واستكشاف شبه الجزيرة والعالم',
+    icon: 'Globe2',
+    color: '#C68B59',
+    games: [
+      {
+        id: 'geo-flag-color',
+        title: 'لون العلم',
+        description: 'تخمين درجة لون العلم الصحيحة',
+        route: '/room/:code/flags-tv',
+        icon: 'Palette',
+      },
+      {
+        id: 'geo-pin-landmark',
+        title: 'حدد الموقع',
+        description: 'تحديد إحداثيات المعالم على الخريطة',
+        route: '/room/:code/geo-tv',
+        icon: 'MapPin',
+      },
+      {
+        id: 'geo-trajectory',
+        title: 'على مسار الخط',
+        description: 'توقع الدول الواقعة على امتداد المسار',
+        route: '/room/:code/trajectory-tv',
+        icon: 'Compass',
+      },
+      {
+        id: 'geo-blind-tourism',
+        title: 'سياحة عمياء',
+        description: 'تخمين الوجهة من ٥ تلميحات تدريجية',
+        route: '/room/:code/tourism-tv',
+        icon: 'HelpCircle',
+      },
+    ],
+  },
+];
