@@ -187,8 +187,20 @@ export const FootballBingoMobileView: React.FC = () => {
 
   // Realtime Setup
   useEffect(() => {
-    const channelName = `room:${roomCode}`;
-    const channel = supabase.channel(channelName, {
+    if (!roomCode) return;
+
+    // Dedicated channel ID for Football Bingo to prevent topic collision with parent PlayerMobileView
+    const channelId = `bingo:${roomCode}`;
+
+    // Remove any existing subscription on this topic
+    const existingChannel = supabase.getChannels().find(
+      ch => ch.topic === `realtime:${channelId}` || ch.topic === channelId
+    );
+    if (existingChannel) {
+      supabase.removeChannel(existingChannel);
+    }
+
+    const channel = supabase.channel(channelId, {
       config: {
         broadcast: { self: true },
         presence: { key: playerId },
@@ -196,6 +208,15 @@ export const FootballBingoMobileView: React.FC = () => {
     });
 
     channel
+      .on('presence', { event: 'sync' }, () => {
+        // Presence sync
+      })
+      .on('presence', { event: 'join' }, ({ newPresences }) => {
+        console.log('[FootballBingo Mobile] Player joined:', newPresences);
+      })
+      .on('presence', { event: 'leave' }, ({ leftPresences }) => {
+        console.log('[FootballBingo Mobile] Player left:', leftPresences);
+      })
       .on('broadcast', { event: 'bingo_event' }, ({ payload }: { payload: FootballBingoEventPayload }) => {
         if (!payload) return;
 
@@ -256,6 +277,7 @@ export const FootballBingoMobileView: React.FC = () => {
       })
       .subscribe(status => {
         if (status === 'SUBSCRIBED') {
+          console.log('[FootballBingo Mobile] Subscribed successfully to', channelId);
           channel.track({
             id: playerId,
             name: playerName,
@@ -267,9 +289,9 @@ export const FootballBingoMobileView: React.FC = () => {
     channelRef.current = channel;
 
     return () => {
-      channel.unsubscribe();
+      supabase.removeChannel(channel);
     };
-  }, [roomCode, playerId, playerName]);
+  }, [roomCode, playerId, playerName, isReady]);
 
   return (
     <div

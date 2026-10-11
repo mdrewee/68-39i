@@ -174,8 +174,20 @@ export const FootballBingoTVView: React.FC = () => {
 
   // Setup Realtime Presence & Broadcast
   useEffect(() => {
-    const channelName = `room:${roomCode}`;
-    const channel = supabase.channel(channelName, {
+    if (!roomCode) return;
+
+    // Dedicated channel ID for Football Bingo to prevent topic collision with parent TVScreenView
+    const channelId = `bingo:${roomCode}`;
+
+    // Remove any existing subscription on this topic
+    const existingChannel = supabase.getChannels().find(
+      ch => ch.topic === `realtime:${channelId}` || ch.topic === channelId
+    );
+    if (existingChannel) {
+      supabase.removeChannel(existingChannel);
+    }
+
+    const channel = supabase.channel(channelId, {
       config: {
         broadcast: { self: true },
         presence: { key: 'host_tv' },
@@ -210,6 +222,12 @@ export const FootballBingoTVView: React.FC = () => {
         } else {
           setLobbyCountdown(null);
         }
+      })
+      .on('presence', { event: 'join' }, ({ newPresences }) => {
+        console.log('[FootballBingo TV] Player joined:', newPresences);
+      })
+      .on('presence', { event: 'leave' }, ({ leftPresences }) => {
+        console.log('[FootballBingo TV] Player left:', leftPresences);
       })
       .on('broadcast', { event: 'bingo_event' }, ({ payload }: { payload: FootballBingoEventPayload }) => {
         if (!payload) return;
@@ -256,6 +274,7 @@ export const FootballBingoTVView: React.FC = () => {
       })
       .subscribe(status => {
         if (status === 'SUBSCRIBED') {
+          console.log('[FootballBingo TV] Subscribed successfully to', channelId);
           channel.track({ id: 'host_tv', name: 'شاشة العرض' });
         }
       });
@@ -263,7 +282,7 @@ export const FootballBingoTVView: React.FC = () => {
     channelRef.current = channel;
 
     return () => {
-      channel.unsubscribe();
+      supabase.removeChannel(channel);
     };
   }, [roomCode, broadcastEvent]);
 
