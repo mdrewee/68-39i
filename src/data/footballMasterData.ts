@@ -9,6 +9,7 @@ export interface FootballPlayer {
   position: 'GK' | 'DEF' | 'MID' | 'FWD';
   traits?: string[];        // Visual/tactical traits for drafting (e.g. ["أسمر", "أخوان", "قائد", "لعب_بالسعودية"])
   trophies?: string[];      // Major titles (e.g. ["كأس العالم", "دوري أبطال أوروبا", "الكرة الذهبية"])
+  photo?: string;           // Local headshot or avatar path
 }
 
 export interface FootballClubItem {
@@ -208,6 +209,42 @@ export const FOOTBALL_CLUBS_MASTER: FootballClubItem[] = [
 ];
 
 export const FOOTBALL_PLAYERS_MASTER: FootballPlayer[] = [
+  {
+    "id": "p_joao_cancelo",
+    "name": "جواو كانسيلو",
+    "aliases": [
+      "كانسيلو",
+      "cancelo",
+      "joao cancelo",
+      "جواو"
+    ],
+    "nationality": "البرتغال",
+    "nationalityCode": "PT",
+    "clubs": [
+      "بنفيكا",
+      "فالنسيا",
+      "إنتر ميلان",
+      "يوفنتوس",
+      "مانشستر سيتي",
+      "بايرن ميونخ",
+      "برشلونة",
+      "الهلال"
+    ],
+    "currentClub": "الهلال",
+    "position": "DEF",
+    "traits": [
+      "مهاري",
+      "سريع",
+      "عرضيات",
+      "لعب_بالسعودية"
+    ],
+    "trophies": [
+      "الدوري الإنجليزي",
+      "الدوري الإيطالي",
+      "الدوري الألماني"
+    ],
+    "photo": "/assets/football/players/cancelo.jpg"
+  },
   {
     "id": "p_salem_dawsari",
     "name": "سالم الدوسري",
@@ -12169,3 +12206,139 @@ export const FOOTBALL_PLAYERS_MASTER: FootballPlayer[] = [
     ]
   }
 ];
+
+// Map of canonical club names to local asset paths
+export const LOCAL_CLUB_LOGOS: Record<string, string> = {
+  'الهلال': '/assets/football/clubs/al_hilal.png',
+  'النصر': '/assets/football/clubs/al_nassr.png',
+  'الاتحاد': '/assets/football/clubs/al_ittihad.png',
+  'الأهلي': '/assets/football/clubs/al_ahli.png',
+  'الأهلي السعودي': '/assets/football/clubs/al_ahli.png',
+  'ريال مدريد': '/assets/football/clubs/real_madrid.png',
+  'برشلونة': '/assets/football/clubs/barcelona.png',
+  'مانشستر سيتي': '/assets/football/clubs/man_city.png',
+  'مانشستر يونايتد': '/assets/football/clubs/man_united.png',
+  'بايرن ميونخ': '/assets/football/clubs/bayern.png',
+  'باريس سان جيرمان': '/assets/football/clubs/psg.png',
+  'ليفربول': '/assets/football/clubs/liverpool.png',
+  'أرسنال': '/assets/football/clubs/arsenal.png',
+  'تشيلسي': '/assets/football/clubs/chelsea.png',
+  'يوفنتوس': '/assets/football/clubs/juventus.png',
+  'ميلان': '/assets/football/clubs/ac_milan.png',
+  'إيه سي ميلان': '/assets/football/clubs/ac_milan.png',
+  'إنتر ميلان': '/assets/football/clubs/inter.png',
+  'إنتر': '/assets/football/clubs/inter.png',
+};
+
+// Map of canonical country names to local flag paths
+export const LOCAL_COUNTRY_FLAGS: Record<string, string> = {
+  'السعودية': '/assets/football/flags/sa.png',
+  'البرازيل': '/assets/football/flags/br.png',
+  'الأرجنتين': '/assets/football/flags/ar.png',
+  'فرنسا': '/assets/football/flags/fr.png',
+  'البرتغال': '/assets/football/flags/pt.png',
+  'إسبانيا': '/assets/football/flags/es.png',
+  'ألمانيا': '/assets/football/flags/de.png',
+  'مصر': '/assets/football/flags/eg.png',
+  'المغرب': '/assets/football/flags/ma.png',
+  'كرواتيا': '/assets/football/flags/hr.png',
+};
+
+// Map of player identifiers / names to local photo paths
+export const LOCAL_PLAYER_PHOTOS: Record<string, string> = {
+  'p_salem_dawsari': '/assets/football/players/salem_aldawsari.jpg',
+  'سالم الدوسري': '/assets/football/players/salem_aldawsari.jpg',
+  'p_cristiano_ronaldo': '/assets/football/players/ronaldo.jpg',
+  'كريستيانو رونالدو': '/assets/football/players/ronaldo.jpg',
+  'p_lionel_messi': '/assets/football/players/messi.jpg',
+  'ليونيل ميسي': '/assets/football/players/messi.jpg',
+  'p_karim_benzema': '/assets/football/players/benzema.jpg',
+  'كريم بنزيما': '/assets/football/players/benzema.jpg',
+  'p_ngolo_kante': '/assets/football/players/kante.jpg',
+  'نغولو كانتي': '/assets/football/players/kante.jpg',
+  'p_neymar_jr': '/assets/football/players/neymar.jpg',
+  'نيمار دا سيلفا': '/assets/football/players/neymar.jpg',
+  'p_riyad_mahrez': '/assets/football/players/mahrez.jpg',
+  'رياض محرز': '/assets/football/players/mahrez.jpg',
+  'p_luka_modric': '/assets/football/players/modric.jpg',
+  'لوكا مودريتش': '/assets/football/players/modric.jpg',
+  'p_vinicius_jr': '/assets/football/players/vinicius.jpg',
+  'فينيسيوس جونيور': '/assets/football/players/vinicius.jpg',
+  'p_erling_haaland': '/assets/football/players/haaland.jpg',
+  'إيرلينغ هالاند': '/assets/football/players/haaland.jpg',
+  'p_ali_albulayhi': '/assets/football/players/albulayhi.jpg',
+  'علي البليهي': '/assets/football/players/albulayhi.jpg',
+  'p_firas_alburaikan': '/assets/football/players/alburaikan.jpg',
+  'فراس البريكان': '/assets/football/players/alburaikan.jpg',
+  'p_thomas_muller': '/assets/football/players/muller.jpg',
+  'توماس مولر': '/assets/football/players/muller.jpg',
+  'p_toni_kroos': '/assets/football/players/kroos.jpg',
+  'توني كروس': '/assets/football/players/kroos.jpg',
+  'p_kylian_mbappe': '/assets/football/players/mbappe.jpg',
+  'كيليان مبابي': '/assets/football/players/mbappe.jpg',
+  'p_mohamed_salah': '/assets/football/players/salah.jpg',
+  'محمد صلاح': '/assets/football/players/salah.jpg',
+  'p_thibaut_courtois': '/assets/football/players/courtois.jpg',
+  'تيبو كورتوا': '/assets/football/players/courtois.jpg',
+  'p_yassine_bounou': '/assets/football/players/bono.jpg',
+  'ياسين بونو': '/assets/football/players/bono.jpg',
+  'p_kevin_de_bruyne': '/assets/football/players/debruyne.jpg',
+  'كيفين دي بروين': '/assets/football/players/debruyne.jpg',
+  'p_sadio_mane': '/assets/football/players/mane.jpg',
+  'ساديو ماني': '/assets/football/players/mane.jpg',
+  'p_roberto_firmino': '/assets/football/players/firmino.jpg',
+  'روبرتو فيرمينو': '/assets/football/players/firmino.jpg',
+  'p_franck_kessie': '/assets/football/players/kessie.jpg',
+  'فرانك كيسييه': '/assets/football/players/kessie.jpg',
+  'p_edouard_mendy': '/assets/football/players/mendy.jpg',
+  'فيرلاند ميندي': '/assets/football/players/mendy.jpg',
+  'p_ruben_neves': '/assets/football/players/neves.jpg',
+  'روبن نيفيز': '/assets/football/players/neves.jpg',
+  'p_aleksandar_mitrovic': '/assets/football/players/mitrovic.jpg',
+  'ألكسندر ميتروفيتش': '/assets/football/players/mitrovic.jpg',
+  'p_kalidou_koulibaly': '/assets/football/players/koulibaly.jpg',
+  'خاليدو كوليبالي': '/assets/football/players/koulibaly.jpg',
+  'p_joao_cancelo': '/assets/football/players/cancelo.jpg',
+  'جواو كانسيلو': '/assets/football/players/cancelo.jpg',
+  'p_saud_abdulhamid': '/assets/football/players/saud_abdulhamid.jpg',
+  'سعود عبد الحميد': '/assets/football/players/saud_abdulhamid.jpg',
+  'p_jude_bellingham': '/assets/football/players/bellingham.jpg',
+  'جود بيلينغهام': '/assets/football/players/bellingham.jpg',
+  'p_robert_lewandowski': '/assets/football/players/lewandowski.jpg',
+  'روبرت ليفاندوفسكي': '/assets/football/players/lewandowski.jpg',
+  'p_cole_palmer': '/assets/football/players/palmer.jpg',
+  'كول بالمر': '/assets/football/players/palmer.jpg',
+  'p_bukayo_saka': '/assets/football/players/saka.jpg',
+  'بوكايو ساكا': '/assets/football/players/saka.jpg',
+  'p_manuel_neuer': '/assets/football/players/neuer.jpg',
+  'مانويل نوير': '/assets/football/players/neuer.jpg',
+  'p_achraf_hakimi': '/assets/football/players/hakimi.jpg',
+  'أشرف حكيمي': '/assets/football/players/hakimi.jpg',
+  'p_zinedine_zidane': '/assets/football/players/zidane_player.jpg',
+  'زين الدين زيدان': '/assets/football/players/zidane_player.jpg',
+  'p_ronaldinho': '/assets/football/players/ronaldinho.jpg',
+  'رونالدينيو': '/assets/football/players/ronaldinho.jpg',
+  'p_sergio_ramos': '/assets/football/players/ramos.jpg',
+  'سيرجيو راموس': '/assets/football/players/ramos.jpg',
+  'p_alisson_becker': '/assets/football/players/alisson.jpg',
+  'أليسون بيكر': '/assets/football/players/alisson.jpg',
+};
+
+export function getPlayerPhoto(player: FootballPlayer | string): string {
+  if (typeof player === 'object' && player.photo) return player.photo;
+  const key = typeof player === 'string' ? player : player.id;
+  const name = typeof player === 'string' ? player : player.name;
+  if (LOCAL_PLAYER_PHOTOS[key]) return LOCAL_PLAYER_PHOTOS[key];
+  if (LOCAL_PLAYER_PHOTOS[name]) return LOCAL_PLAYER_PHOTOS[name];
+  // Default clean soccer avatar
+  return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="%232C2A29"><circle cx="50" cy="35" r="22" fill="%238A9A5B"/><path d="M20 85 C20 60 80 60 80 85 Z" fill="%232C2A29"/></svg>`;
+}
+
+export function getClubLogo(clubName: string): string {
+  if (LOCAL_CLUB_LOGOS[clubName]) return LOCAL_CLUB_LOGOS[clubName];
+  // Check country flag if club is a country
+  if (LOCAL_COUNTRY_FLAGS[clubName]) return LOCAL_COUNTRY_FLAGS[clubName];
+  // Default clean shield badge
+  return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50 10 L85 25 L85 60 C85 75 50 92 50 92 C50 92 15 75 15 60 L15 25 Z" fill="%238A9A5B" stroke="%232C2A29" stroke-width="4"/><text x="50" y="58" font-size="28" text-anchor="middle" fill="%23F7F4EC">⚽</text></svg>`;
+}
+

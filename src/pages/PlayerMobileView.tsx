@@ -22,6 +22,7 @@ import { ForbiddenWordsMobileView } from './eshrah/ForbiddenWords/ForbiddenWords
 import { OneWordMobileView } from './eshrah/OneWord/OneWordMobileView';
 import { MoveThePuppetMobileView } from './eshrah/MoveThePuppet/MoveThePuppetMobileView';
 import { FootballBingoMobileView } from './football/football-bingo/FootballBingoMobileView';
+import { MutualLinkMobileView } from './football/mutual-link/MutualLinkMobileView';
 import { MobileTopBar } from '../components/MobileTopBar';
 import { getOrCreatePlayerId, getOrCreatePlayerName, clearPlayerSession } from '../utils/playerSession';
 import { useSafeCountdown } from '../hooks/useSafeCountdown';
@@ -442,6 +443,12 @@ export const PlayerMobileView: React.FC = () => {
     path.includes('football-bingo')
   ) {
     return <FootballBingoMobileView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'mutual-link' ||
+    path.includes('mutual-link')
+  ) {
+    return <MutualLinkMobileView />;
   }
 
   // Fallbacks based on active states if selectedGameId is not explicitly set

@@ -168,9 +168,16 @@ export const CATEGORIES_REGISTRY: CategoryItem[] = [
       {
         id: 'football-bingo',
         title: 'بينقو الكروي',
-        description: 'لوحة بينقو 16 مربع بصري.. كل ثانيتين ينزل لاعب عشوائي على الشاشة، اربطه بالمربع الصح وأول من يقفل خط يصرخ بينقو!',
+        description: 'لوحة بينقو 16 مربع بصري.. كل 5 ثوان ينزل لاعب عشوائي على الشاشة، اربطه بالمربع الصح وأول من يقفل خط يصرخ بينقو!',
         route: '/room/:code/football/football-bingo',
         icon: 'Grid',
+      },
+      {
+        id: 'mutual-link',
+        title: 'حلقة الوصل',
+        description: 'اكتشف الرابط السري المشترك بين عملاقين كرويين.. أول من يكتب الإجابة الصحيحة يخطف النقطة ويفوز بالجولة!',
+        route: '/room/:code/football/mutual-link',
+        icon: 'Link',
       },
     ],
   },

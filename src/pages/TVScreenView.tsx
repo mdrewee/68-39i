@@ -43,6 +43,7 @@ import { ForbiddenWordsTVView } from './eshrah/ForbiddenWords/ForbiddenWordsTVVi
 import { OneWordTVView } from './eshrah/OneWord/OneWordTVView';
 import { MoveThePuppetTVView } from './eshrah/MoveThePuppet/MoveThePuppetTVView';
 import { FootballBingoTVView } from './football/football-bingo/FootballBingoTVView';
+import { MutualLinkTVView } from './football/mutual-link/MutualLinkTVView';
 import { useSafeCountdown } from '../hooks/useSafeCountdown';
 
 export const TVScreenView: React.FC = () => {
@@ -166,6 +167,12 @@ export const TVScreenView: React.FC = () => {
     path.includes('football-bingo')
   ) {
     return <FootballBingoTVView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'mutual-link' ||
+    path.includes('mutual-link')
+  ) {
+    return <MutualLinkTVView />;
   }
 
   return <ClassicTVScreenView roomId={roomId} />;
