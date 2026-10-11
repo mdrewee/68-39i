@@ -16,7 +16,7 @@ export const MutualLinkTopBar: FC<MutualLinkTopBarProps> = ({
   roomCode,
   phase,
   round = 1,
-  maxRounds = 5,
+  maxRounds = 10,
   timeLeft,
   onExit,
   onEndRoom,

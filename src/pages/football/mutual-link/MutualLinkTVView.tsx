@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { Play, Users, Trophy, Sparkles, RotateCcw, X, Link as LinkIcon, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Play, Users, Trophy, Sparkles, RotateCcw, Link as LinkIcon, CheckCircle2, AlertCircle } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { MutualLinkTopBar } from './components/MutualLinkTopBar';
+import { SafeImage } from './components/SafeImage';
 import {
   MutualLinkPhase,
   MutualLinkPlayer,
@@ -22,23 +23,26 @@ export const MutualLinkTVView: React.FC = () => {
   const navigate = useNavigate();
   const roomCode = (rawCode || '000000').toUpperCase();
 
-  // Core Game State
+  // Core Game State (Strictly 10 Rounds)
+  const maxRounds = 10;
   const [phase, setPhase] = useState<MutualLinkPhase>('LOBBY');
   const [round, setRound] = useState<number>(1);
-  const maxRounds = 5;
   const [challenges, setChallenges] = useState<MutualLinkChallenge[]>([]);
   const [currentChallenge, setCurrentChallenge] = useState<MutualLinkChallenge | null>(null);
 
   const [players, setPlayers] = useState<MutualLinkPlayer[]>([]);
   const [scores, setScores] = useState<Record<string, number>>({}); // playerId -> points
 
-  // Winner of current round
+  // Winner of current round & multi-answer details
   const [roundWinner, setRoundWinner] = useState<{
     id: string;
     name: string;
     guessText: string;
+    matchedName?: string;
+    otherOptions?: string[];
   } | null>(null);
   const [isTimeout, setIsTimeout] = useState<boolean>(false);
+  const [timeoutOtherOptions, setTimeoutOtherOptions] = useState<string[]>([]);
 
   // 20-Second round timer
   const ROUND_DURATION_MS = 20000;
@@ -74,6 +78,16 @@ export const MutualLinkTVView: React.FC = () => {
     });
   }, []);
 
+  // Host Kick Player from Lobby
+  const handleKickPlayer = useCallback((targetPlayerId: string) => {
+    sound.playClick();
+    broadcastEvent({
+      action: 'KICK_PLAYER',
+      targetPlayerId,
+    });
+    setPlayers(prev => prev.filter(p => p.id !== targetPlayerId));
+  }, [broadcastEvent]);
+
   // Terminate Room entirely
   const handleTerminateRoom = useCallback(() => {
     sound.playClick();
@@ -86,7 +100,7 @@ export const MutualLinkTVView: React.FC = () => {
     navigate('/');
   }, [broadcastEvent, navigate]);
 
-  // Start match from Lobby
+  // Start match from Lobby (10 rounds)
   const handleStartGame = useCallback(() => {
     sound.playWhistle();
     const generated = generateMutualLinkChallenges(maxRounds);
@@ -149,7 +163,7 @@ export const MutualLinkTVView: React.FC = () => {
     });
   }, [broadcastEvent, maxRounds]);
 
-  // Process a guess from a contestant
+  // Process a guess from a contestant (Exhaustive Set Matching)
   const handleProcessGuess = useCallback((playerId: string, playerName: string, guessText: string) => {
     if (phaseRef.current !== 'GAMEPLAY') return;
     const challenge = currentChallengeRef.current;
@@ -158,18 +172,61 @@ export const MutualLinkTVView: React.FC = () => {
     const normGuess = normalizeArabicFootball(guessText);
     if (!normGuess) return;
 
-    // Check if guess matches any valid answer
-    const isCorrect = challenge.validAnswers.some(ans => {
-      const normAns = normalizeArabicFootball(ans);
-      return normAns === normGuess || normAns.includes(normGuess) || normGuess.includes(normAns);
-    });
+    // Check if guess matches ANY valid player/entity in the exhaustive set
+    const isCorrect = challenge.validAnswers.includes(normGuess) ||
+      challenge.validDisplayNames.some(d => normalizeArabicFootball(d) === normGuess);
 
     if (isCorrect) {
+      // Find the specific matched display name
+      let matchedOfficialName = guessText;
+      let matchedPhoto = challenge.revealItem.image;
+
+      if (challenge.type === 'CLUB_TO_CLUB' && challenge.matchingPlayers) {
+        const foundPlayer = challenge.matchingPlayers.find(p =>
+          normalizeArabicFootball(p.name) === normGuess ||
+          p.aliases.some(a => normalizeArabicFootball(a) === normGuess)
+        );
+        if (foundPlayer) {
+          matchedOfficialName = foundPlayer.name;
+          if (foundPlayer.photo) matchedPhoto = foundPlayer.photo;
+        }
+      } else {
+        const foundEntity = challenge.validDisplayNames.find(
+          d => normalizeArabicFootball(d) === normGuess
+        );
+        if (foundEntity) matchedOfficialName = foundEntity;
+      }
+
+      // Collect all other valid options for display
+      const normMatched = normalizeArabicFootball(matchedOfficialName);
+      const otherOptions = challenge.validDisplayNames.filter(
+        name => normalizeArabicFootball(name) !== normMatched && normalizeArabicFootball(name) !== normGuess
+      );
+
       // Instant round freeze & win
       sound.playVictory();
       setPhase('ROUND_REVEAL');
-      setRoundWinner({ id: playerId, name: playerName, guessText });
+      setRoundWinner({
+        id: playerId,
+        name: playerName,
+        guessText,
+        matchedName: matchedOfficialName,
+        otherOptions,
+      });
       setIsTimeout(false);
+
+      // Update revealItem dynamically if the player guessed a valid player with photo
+      setCurrentChallenge(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          revealItem: {
+            name: matchedOfficialName,
+            image: matchedPhoto,
+            subtitle: prev.revealItem.subtitle,
+          },
+        };
+      });
 
       // Award +1 pt
       const newScores = {
@@ -188,6 +245,8 @@ export const MutualLinkTVView: React.FC = () => {
         winnerPlayerId: playerId,
         winnerPlayerName: playerName,
         guessText,
+        matchedName: matchedOfficialName,
+        otherOptions,
         challenge,
         scores: newScores,
       });
@@ -239,11 +298,18 @@ export const MutualLinkTVView: React.FC = () => {
         setIsTimeout(true);
         setRoundWinner(null);
 
+        const challenge = currentChallengeRef.current;
+        const others = challenge
+          ? challenge.validDisplayNames.filter(d => d !== challenge.revealItem.name)
+          : [];
+        setTimeoutOtherOptions(others);
+
         broadcastEvent({
           action: 'ROUND_TIMEOUT',
           phase: 'ROUND_REVEAL',
           round: roundRef.current,
-          challenge: currentChallengeRef.current || undefined,
+          challenge: challenge || undefined,
+          otherOptions: others,
         });
 
         // Auto advance after 3 seconds
@@ -294,7 +360,6 @@ export const MutualLinkTVView: React.FC = () => {
             map.set(entry.id, {
               id: entry.id,
               name: entry.name || 'لاعب',
-              avatar: entry.avatar || '⚽',
               score: scoresRef.current[entry.id] || 0,
             });
           }
@@ -312,7 +377,6 @@ export const MutualLinkTVView: React.FC = () => {
               return [...prev, {
                 id: entry.id,
                 name: entry.name || 'لاعب',
-                avatar: entry.avatar || '⚽',
                 score: scoresRef.current[entry.id] || 0,
               }];
             });
@@ -465,10 +529,18 @@ export const MutualLinkTVView: React.FC = () => {
                       {players.map((p) => (
                         <div
                           key={p.id}
-                          className="flex items-center gap-2 bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-3 py-2 rounded-xl"
+                          className="flex items-center justify-between gap-2 bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-3 py-2 rounded-xl"
                         >
-                          <span className="text-xl">{p.avatar || '⚽'}</span>
                           <span className="font-black text-sm text-[#2C2A29] truncate">{p.name}</span>
+                          {/* Host Kick Button [×] */}
+                          <button
+                            type="button"
+                            onClick={() => handleKickPlayer(p.id)}
+                            className="bg-[#C68B59] hover:bg-[#2C2A29] text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shrink-0 transition-colors cursor-pointer"
+                            title="استبعاد المتسابق"
+                          >
+                            ×
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -481,7 +553,7 @@ export const MutualLinkTVView: React.FC = () => {
                   className="w-full mt-6 bg-[#8A9A5B] hover:bg-[#78884E] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none py-3.5 px-6 rounded-xl font-black text-lg flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
                   <Play size={20} className="fill-[#F7F4EC]" />
-                  <span>انطلق - ابدأ التحدي (5 جولات)</span>
+                  <span>انطلق - ابدأ التحدي (10 جولات)</span>
                 </button>
               </div>
             </div>
@@ -512,16 +584,9 @@ export const MutualLinkTVView: React.FC = () => {
               {/* Entity A Card (Left) */}
               <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-4 hover:shadow-[6px_6px_0px_#2C2A29] transition-all">
                 <div className="w-36 h-36 md:w-44 md:h-44 bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl overflow-hidden flex items-center justify-center p-2 relative">
-                  <img
+                  <SafeImage
                     src={currentChallenge.entityA.image}
                     alt={currentChallenge.entityA.name}
-                    referrerPolicy="no-referrer"
-                    crossOrigin="anonymous"
-                    className="w-full h-full object-contain filter drop-shadow"
-                    onError={(e) => {
-                      // Fallback placeholder
-                      (e.currentTarget as HTMLImageElement).src = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="%238A9A5B"/><text x="50" y="60" font-size="40" text-anchor="middle" fill="%23F7F4EC">⚽</text></svg>`;
-                    }}
                   />
                 </div>
                 <h3 className="text-xl md:text-2xl font-black text-[#2C2A29]">
@@ -529,31 +594,28 @@ export const MutualLinkTVView: React.FC = () => {
                 </h3>
               </div>
 
-              {/* Center Bridge: Animated Question Box [ ؟ ] or Revealed Card */}
+              {/* Center Bridge: COMPLETELY STATIC QUESTION BOX [ ؟ ] or Revealed Card */}
               <div className="flex flex-col items-center justify-center py-4 relative">
-                {/* Connecting lines for brutalist bridge */}
+                {/* Connecting line for brutalist bridge */}
                 <div className="hidden md:block absolute w-full h-1 bg-[#2C2A29] top-1/2 -z-0" />
 
                 {phase === 'GAMEPLAY' ? (
-                  // Glowing Question Box
-                  <div className="w-40 h-40 md:w-48 md:h-48 bg-[#8A9A5B] border-4 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl flex flex-col items-center justify-center text-center p-4 z-10 animate-bounce duration-1000">
-                    <span className="text-6xl md:text-7xl font-black text-[#F7F4EC] select-none filter drop-shadow">
+                  // Completely Static Brutalist Card: ZERO BOUNCE OR JITTER
+                  <div className="w-36 h-36 md:w-44 md:h-44 bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-xl flex flex-col items-center justify-center font-black text-2xl text-[#2C2A29] z-10 select-none">
+                    <span className="text-5xl md:text-6xl font-black text-[#2C2A29]">
                       ؟
                     </span>
-                    <span className="mt-2 text-xs font-black text-[#F7F4EC] bg-[#2C2A29] px-2.5 py-0.5 rounded-lg">
+                    <span className="mt-2 text-xs font-black text-[#5C4033] bg-[#E5E0D5] border border-[#2C2A29] px-2.5 py-0.5 rounded-lg">
                       حلقة الوصل
                     </span>
                   </div>
                 ) : (
-                  // Revealed Answer Card (Flipped)
-                  <div className="w-44 h-52 md:w-52 md:h-60 bg-[#F7F4EC] border-4 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl flex flex-col items-center justify-center text-center p-4 z-10 animate-scale-up">
-                    <div className="w-24 h-24 md:w-28 md:h-28 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-2xl overflow-hidden p-1 mb-2">
-                      <img
+                  // Revealed Answer Card (Static crisp brutalist)
+                  <div className="w-44 h-52 md:w-52 md:h-60 bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-2xl flex flex-col items-center justify-center text-center p-4 z-10">
+                    <div className="w-24 h-24 md:w-28 md:h-28 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl overflow-hidden p-1 mb-2">
+                      <SafeImage
                         src={currentChallenge.revealItem.image}
                         alt={currentChallenge.revealItem.name}
-                        referrerPolicy="no-referrer"
-                        crossOrigin="anonymous"
-                        className="w-full h-full object-contain"
                       />
                     </div>
                     <span className="text-xs font-bold text-[#8A9A5B]">حلقة الوصل هي</span>
@@ -572,15 +634,9 @@ export const MutualLinkTVView: React.FC = () => {
               {/* Entity B Card (Right) */}
               <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-4 hover:shadow-[6px_6px_0px_#2C2A29] transition-all">
                 <div className="w-36 h-36 md:w-44 md:h-44 bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl overflow-hidden flex items-center justify-center p-2 relative">
-                  <img
+                  <SafeImage
                     src={currentChallenge.entityB.image}
                     alt={currentChallenge.entityB.name}
-                    referrerPolicy="no-referrer"
-                    crossOrigin="anonymous"
-                    className="w-full h-full object-contain filter drop-shadow"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="%238A9A5B"/><text x="50" y="60" font-size="40" text-anchor="middle" fill="%23F7F4EC">⚽</text></svg>`;
-                    }}
                   />
                 </div>
                 <h3 className="text-xl md:text-2xl font-black text-[#2C2A29]">
@@ -589,45 +645,65 @@ export const MutualLinkTVView: React.FC = () => {
               </div>
             </div>
 
-            {/* Celebration or Timeout Banner */}
+            {/* Celebration or Timeout Banner with Multi-Answer Tag */}
             {phase === 'ROUND_REVEAL' && (
-              <div className="w-full max-w-2xl animate-fade-in">
+              <div className="w-full max-w-3xl animate-fade-in">
                 {roundWinner ? (
-                  <div className="bg-[#8A9A5B] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] p-4 rounded-2xl flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <CheckCircle2 size={32} className="text-[#F7F4EC]" />
-                      <div>
-                        <h4 className="font-black text-xl md:text-2xl">
-                          {roundWinner.name} جاب حلقة الوصل! (+1 pt)
-                        </h4>
-                        <p className="text-xs md:text-sm font-bold opacity-90">
-                          الإجابة: {roundWinner.guessText}
-                        </p>
+                  <div className="bg-[#8A9A5B] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] p-4 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <CheckCircle2 size={32} className="text-[#F7F4EC] shrink-0" />
+                        <div>
+                          <h4 className="font-black text-xl md:text-2xl">
+                            {roundWinner.name} جاب حلقة الوصل! (+1 pt)
+                          </h4>
+                          <p className="text-xs md:text-sm font-bold opacity-95">
+                            الإجابة: <span className="underline font-black">{roundWinner.matchedName || roundWinner.guessText}</span>
+                          </p>
+                        </div>
                       </div>
+                      {advanceCountdown !== null && (
+                        <span className="text-xs font-black bg-[#2C2A29] text-[#F7F4EC] px-3 py-1 rounded-xl">
+                          الجولة التالية خلال {advanceCountdown}ث
+                        </span>
+                      )}
                     </div>
-                    {advanceCountdown !== null && (
-                      <span className="text-xs font-black bg-[#2C2A29] text-[#F7F4EC] px-3 py-1 rounded-xl">
-                        الجولة التالية خلال {advanceCountdown}ث
-                      </span>
+
+                    {/* Small tag listing other possible valid answers */}
+                    {roundWinner.otherOptions && roundWinner.otherOptions.length > 0 && (
+                      <div className="bg-[#F7F4EC] text-[#2C2A29] border border-[#2C2A29] rounded-xl px-3 py-1.5 text-xs font-bold flex flex-wrap items-center gap-1.5 shadow-[1px_1px_0px_#2C2A29]">
+                        <span className="text-[#5C4033] font-black">خيارات صحيحة أخرى:</span>
+                        <span>{roundWinner.otherOptions.slice(0, 5).join('، ')}</span>
+                      </div>
                     )}
                   </div>
                 ) : isTimeout ? (
-                  <div className="bg-[#C68B59] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] p-4 rounded-2xl flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <AlertCircle size={32} className="text-[#F7F4EC]" />
-                      <div>
-                        <h4 className="font-black text-xl md:text-2xl">
-                          انتهى الوقت! لم يجب أحد في الوقت المحدد
-                        </h4>
-                        <p className="text-xs md:text-sm font-bold opacity-90">
-                          حلقة الوصل كانت: {currentChallenge.revealItem.name}
-                        </p>
+                  <div className="bg-[#C68B59] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] p-4 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <AlertCircle size={32} className="text-[#F7F4EC] shrink-0" />
+                        <div>
+                          <h4 className="font-black text-xl md:text-2xl">
+                            انتهى الوقت! لم يجب أحد في الوقت المحدد
+                          </h4>
+                          <p className="text-xs md:text-sm font-bold opacity-95">
+                            حلقة الوصل كانت: <span className="underline font-black">{currentChallenge.revealItem.name}</span>
+                          </p>
+                        </div>
                       </div>
+                      {advanceCountdown !== null && (
+                        <span className="text-xs font-black bg-[#2C2A29] text-[#F7F4EC] px-3 py-1 rounded-xl">
+                          الجولة التالية خلال {advanceCountdown}ث
+                        </span>
+                      )}
                     </div>
-                    {advanceCountdown !== null && (
-                      <span className="text-xs font-black bg-[#2C2A29] text-[#F7F4EC] px-3 py-1 rounded-xl">
-                        الجولة التالية خلال {advanceCountdown}ث
-                      </span>
+
+                    {/* Other possible answers list */}
+                    {timeoutOtherOptions.length > 0 && (
+                      <div className="bg-[#F7F4EC] text-[#2C2A29] border border-[#2C2A29] rounded-xl px-3 py-1.5 text-xs font-bold flex flex-wrap items-center gap-1.5 shadow-[1px_1px_0px_#2C2A29]">
+                        <span className="text-[#5C4033] font-black">خيارات صحيحة أخرى:</span>
+                        <span>{timeoutOtherOptions.slice(0, 5).join('، ')}</span>
+                      </div>
                     )}
                   </div>
                 ) : null}
@@ -648,7 +724,6 @@ export const MutualLinkTVView: React.FC = () => {
                       roundWinner?.id === p.id ? 'bg-[#8A9A5B] text-white animate-pulse' : 'bg-[#E5E0D5] text-[#2C2A29]'
                     }`}
                   >
-                    <span>{p.avatar || '⚽'}</span>
                     <span className="font-black text-xs md:text-sm">{p.name}</span>
                     <span className="bg-[#2C2A29] text-[#F7F4EC] px-2 py-0.5 rounded-lg text-xs font-black font-mono">
                       {scores[p.id] || 0}
@@ -661,14 +736,14 @@ export const MutualLinkTVView: React.FC = () => {
         )}
 
         {/* =======================================================
-            STATE 4: MATCH OVER (FINAL PODIUM)
+            STATE 4: MATCH OVER (FINAL PODIUM - 10 ROUNDS)
             ======================================================= */}
         {phase === 'MATCH_OVER' && (
           <div className="flex flex-col items-center justify-center w-full max-w-4xl space-y-8 animate-fade-in text-center">
             <div className="space-y-2">
               <div className="inline-flex items-center gap-2 bg-[#8A9A5B] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-4 py-1.5 rounded-xl font-black text-sm">
                 <Sparkles size={16} />
-                <span>نهاية التحدي (5 جولات)</span>
+                <span>نهاية التحدي (10 جولات)</span>
               </div>
               <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29]">
                 🎉 حفل تتويج ملك حلقة الوصل!
@@ -680,7 +755,6 @@ export const MutualLinkTVView: React.FC = () => {
               {/* 2nd Place */}
               {sortedPlayers[1] ? (
                 <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-4 flex flex-col items-center h-48 justify-end">
-                  <span className="text-2xl mb-1">{sortedPlayers[1].avatar || '⚽'}</span>
                   <span className="text-xl font-black text-[#5C4033]">🥈 المركز 2</span>
                   <h4 className="font-black text-base text-[#2C2A29] truncate max-w-full">
                     {sortedPlayers[1].name}
@@ -696,7 +770,6 @@ export const MutualLinkTVView: React.FC = () => {
               {/* 1st Place (Champion) */}
               {sortedPlayers[0] ? (
                 <div className="bg-[#8A9A5B] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-2xl p-6 flex flex-col items-center h-60 justify-end transform -translate-y-4">
-                  <span className="text-4xl mb-2">{sortedPlayers[0].avatar || '👑'}</span>
                   <span className="text-2xl font-black">🥇 البطل</span>
                   <h4 className="font-black text-xl truncate max-w-full">
                     {sortedPlayers[0].name}
@@ -712,7 +785,6 @@ export const MutualLinkTVView: React.FC = () => {
               {/* 3rd Place */}
               {sortedPlayers[2] ? (
                 <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-4 flex flex-col items-center h-40 justify-end">
-                  <span className="text-2xl mb-1">{sortedPlayers[2].avatar || '⚽'}</span>
                   <span className="text-lg font-black text-[#5C4033]">🥉 المركز 3</span>
                   <h4 className="font-black text-sm text-[#2C2A29] truncate max-w-full">
                     {sortedPlayers[2].name}
@@ -733,7 +805,7 @@ export const MutualLinkTVView: React.FC = () => {
                 className="bg-[#8A9A5B] hover:bg-[#78884E] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] px-6 py-3 rounded-xl font-black text-base flex items-center gap-2 cursor-pointer"
               >
                 <RotateCcw size={18} />
-                <span>لعب تحدي جديد (5 جولات)</span>
+                <span>لعب تحدي جديد (10 جولات)</span>
               </button>
               <button
                 onClick={() => setPhase('LOBBY')}

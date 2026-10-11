@@ -21,6 +21,7 @@ export type MutualLinkAction =
   | 'ROUND_TIMEOUT'
   | 'NEXT_ROUND'
   | 'RESET_LOBBY'
+  | 'KICK_PLAYER'
   | 'ROOM_TERMINATED';
 
 export interface MutualLinkEventPayload {
@@ -32,8 +33,11 @@ export interface MutualLinkEventPayload {
   winnerPlayerId?: string;
   winnerPlayerName?: string;
   guessText?: string;
+  matchedName?: string;
+  otherOptions?: string[];
   playerId?: string;
   playerName?: string;
+  targetPlayerId?: string;
   players?: MutualLinkPlayer[];
   scores?: Record<string, number>;
 }

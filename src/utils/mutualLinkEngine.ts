@@ -4,6 +4,7 @@ import {
   getPlayerPhoto,
   getClubLogo,
 } from '../data/footballMasterData';
+import { normalizeArabicFootball } from './footballSearch';
 
 export type MutualLinkType = 'PLAYER_TO_PLAYER' | 'CLUB_TO_CLUB';
 
@@ -12,13 +13,19 @@ export interface MutualLinkChallenge {
   type: MutualLinkType;
   entityA: { name: string; image: string };
   entityB: { name: string; image: string };
-  validAnswers: string[]; // List of valid player/club names or IDs
-  validDisplayNames: string[];
+  validAnswers: string[]; // Normalized strings for instant exhaustive matching
+  validDisplayNames: string[]; // All valid human-readable answer names
   revealItem: {
     name: string;
     image: string;
     subtitle?: string;
   };
+  matchingPlayers?: {
+    id: string;
+    name: string;
+    photo?: string;
+    aliases: string[];
+  }[];
 }
 
 // Common aliases for top clubs & countries to ensure contestants' guesses match smoothly
@@ -56,44 +63,54 @@ const ENTITY_ALIASES: Record<string, string[]> = {
 };
 
 /**
- * Expand a list of entity names into all valid search terms and aliases
+ * Expand a list of entity names into all valid normalized search terms and aliases
  */
 function expandEntityAnswers(entities: string[]): string[] {
   const result = new Set<string>();
   for (const ent of entities) {
-    result.add(ent);
+    result.add(normalizeArabicFootball(ent));
+    // Without 'Al' prefix
+    if (ent.startsWith('ال')) {
+      result.add(normalizeArabicFootball(ent.slice(2)));
+    }
     const aliases = ENTITY_ALIASES[ent];
     if (aliases) {
-      aliases.forEach(a => result.add(a));
+      aliases.forEach(a => {
+        result.add(normalizeArabicFootball(a));
+        if (a.startsWith('ال')) {
+          result.add(normalizeArabicFootball(a.slice(2)));
+        }
+      });
     }
   }
-  return Array.from(result);
+  return Array.from(result).filter(Boolean);
 }
 
 /**
  * Procedural Question Generator for "حلقة الوصل"
- * Generates balanced challenges using set intersections on careers & clubs
+ * Generates 10 balanced challenges using set intersections on careers & clubs
+ * Computes the full exhaustive set of matches for every challenge.
  */
-export const generateMutualLinkChallenges = (count = 5): MutualLinkChallenge[] => {
+export const generateMutualLinkChallenges = (count = 10): MutualLinkChallenge[] => {
   const challenges: MutualLinkChallenge[] = [];
   const players = FOOTBALL_PLAYERS_MASTER;
 
   // Curate all clubs with at least 1 player in the dataset
   const allClubs = Array.from(new Set(players.flatMap(p => p.clubs))).filter(c => c && c.trim().length > 1);
 
-  // Keep track of used pairs to prevent repetition within the 5 rounds
+  // Keep track of used pairs to prevent repetition within the 10 rounds
   const usedSignatures = new Set<string>();
 
   for (let i = 0; i < count; i++) {
-    // Alternate or 50% chance between Club-to-Club and Player-to-Player
+    // 50% Club-to-Club, 50% Player-to-Player
     const isClubMode = i % 2 === 0;
 
     if (isClubMode) {
       let clubA = '', clubB = '';
-      let sharedPlayers: FootballPlayer[] = [];
+      let allMatchingPlayers: FootballPlayer[] = [];
       let attempts = 0;
 
-      while (sharedPlayers.length === 0 && attempts < 80) {
+      while (allMatchingPlayers.length === 0 && attempts < 100) {
         attempts++;
         clubA = allClubs[Math.floor(Math.random() * allClubs.length)];
         clubB = allClubs[Math.floor(Math.random() * allClubs.length)];
@@ -102,12 +119,16 @@ export const generateMutualLinkChallenges = (count = 5): MutualLinkChallenge[] =
         const sig = [clubA, clubB].sort().join('___');
         if (usedSignatures.has(sig)) continue;
 
-        sharedPlayers = players.filter(p => p.clubs.includes(clubA) && p.clubs.includes(clubB));
+        allMatchingPlayers = players.filter(p => p.clubs.includes(clubA) && p.clubs.includes(clubB));
       }
 
       // If random search struggled, fallback to popular pairings
-      if (sharedPlayers.length === 0) {
-        const popularClubs = ['الهلال', 'النصر', 'الاتحاد', 'الأهلي', 'ريال مدريد', 'برشلونة', 'مانشستر سيتي', 'تشيلسي', 'ميلان', 'يوفنتوس', 'باريس سان جيرمان'];
+      if (allMatchingPlayers.length === 0) {
+        const popularClubs = [
+          'الهلال', 'النصر', 'الاتحاد', 'الأهلي', 'ريال مدريد',
+          'برشلونة', 'مانشستر سيتي', 'تشيلسي', 'ميلان', 'يوفنتوس',
+          'باريس سان جيرمان', 'ليفربول', 'أرسنال', 'الشباب'
+        ];
         for (let a = 0; a < popularClubs.length; a++) {
           for (let b = a + 1; b < popularClubs.length; b++) {
             const sig = [popularClubs[a], popularClubs[b]].sort().join('___');
@@ -116,43 +137,56 @@ export const generateMutualLinkChallenges = (count = 5): MutualLinkChallenge[] =
             if (shared.length > 0) {
               clubA = popularClubs[a];
               clubB = popularClubs[b];
-              sharedPlayers = shared;
+              allMatchingPlayers = shared;
               break;
             }
           }
-          if (sharedPlayers.length > 0) break;
+          if (allMatchingPlayers.length > 0) break;
         }
       }
 
-      if (sharedPlayers.length > 0) {
+      if (allMatchingPlayers.length > 0) {
         const sig = [clubA, clubB].sort().join('___');
         usedSignatures.add(sig);
 
-        // Pick primary reveal hero (prefer player with photo or top player)
-        const primaryHero = sharedPlayers.find(p => p.photo) || sharedPlayers[0];
+        // Pick primary reveal hero (prefer player with photo or first player)
+        const primaryHero = allMatchingPlayers.find(p => p.photo) || allMatchingPlayers[0];
 
-        // Collect all valid answer representations
-        const validAnswers = Array.from(new Set(
-          sharedPlayers.flatMap(p => [
-            p.name,
-            ...p.aliases,
-            p.id,
-            p.name.replace(/^ال/, ''), // without 'Al'
-          ])
-        ));
+        // Exhaustive validAnswers: includes ALL matching players and their aliases (normalized)
+        const validAnswersSet = new Set<string>();
+        allMatchingPlayers.forEach(p => {
+          validAnswersSet.add(normalizeArabicFootball(p.name));
+          if (p.name.startsWith('ال')) {
+            validAnswersSet.add(normalizeArabicFootball(p.name.slice(2)));
+          }
+          p.aliases.forEach(a => {
+            validAnswersSet.add(normalizeArabicFootball(a));
+            if (a.startsWith('ال')) {
+              validAnswersSet.add(normalizeArabicFootball(a.slice(2)));
+            }
+          });
+        });
+
+        const validDisplayNames = allMatchingPlayers.map(p => p.name);
 
         challenges.push({
           id: `ml_club_${Date.now()}_${i}`,
           type: 'CLUB_TO_CLUB',
           entityA: { name: clubA, image: getClubLogo(clubA) },
           entityB: { name: clubB, image: getClubLogo(clubB) },
-          validAnswers,
-          validDisplayNames: sharedPlayers.map(p => p.name),
+          validAnswers: Array.from(validAnswersSet),
+          validDisplayNames,
           revealItem: {
             name: primaryHero.name,
             image: getPlayerPhoto(primaryHero),
             subtitle: `لعب مع ${clubA} و ${clubB}`,
           },
+          matchingPlayers: allMatchingPlayers.map(p => ({
+            id: p.id,
+            name: p.name,
+            photo: getPlayerPhoto(p),
+            aliases: p.aliases,
+          })),
         });
         continue;
       }
@@ -164,7 +198,7 @@ export const generateMutualLinkChallenges = (count = 5): MutualLinkChallenge[] =
     let mutualEntities: string[] = [];
     let pAttempts = 0;
 
-    while (mutualEntities.length === 0 && pAttempts < 80) {
+    while (mutualEntities.length === 0 && pAttempts < 100) {
       pAttempts++;
       pA = players[Math.floor(Math.random() * players.length)];
       pB = players[Math.floor(Math.random() * players.length)];
