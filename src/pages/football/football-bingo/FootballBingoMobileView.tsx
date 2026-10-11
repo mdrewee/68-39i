@@ -12,6 +12,7 @@ import {
   generatePlayerBingoBoard,
   evaluateTileMatch,
   checkBingoWin,
+  checkBingoWinDetails,
 } from '../../../data/footballBingoData';
 import { BingoTile } from './components/BingoTile';
 import { sound } from '../../../lib/audio';
@@ -52,6 +53,7 @@ export const FootballBingoMobileView: React.FC = () => {
 
   // Win claim state
   const [isBingoAvailable, setIsBingoAvailable] = useState<boolean>(false);
+  const [winningIndices, setWinningIndices] = useState<number[]>([]);
   const [roundWinner, setRoundWinner] = useState<{ id: string; name: string; round: number } | null>(null);
 
   // 5s Progress bar on mobile
@@ -133,10 +135,11 @@ export const FootballBingoMobileView: React.FC = () => {
       });
 
       // Check Bingo Win
-      const won = checkBingoWin(updatedBoard);
+      const { won, winningIndices: winIdx } = checkBingoWinDetails(updatedBoard);
       if (won) {
         sound.playVictory();
         setIsBingoAvailable(true);
+        setWinningIndices(winIdx);
       }
     } else {
       sound.playIncorrect();
@@ -152,11 +155,16 @@ export const FootballBingoMobileView: React.FC = () => {
 
     broadcast({
       action: 'BINGO_CLAIM',
+      winnerId: playerId,
+      winnerName: playerName,
       winner: {
         id: playerId,
         name: playerName,
         round,
       },
+      round,
+      board,
+      winningIndices,
     });
 
     setPhase('ROUND_WIN');
@@ -164,6 +172,15 @@ export const FootballBingoMobileView: React.FC = () => {
       id: playerId,
       name: playerName,
       round,
+    });
+  };
+
+  // Mobile request next round
+  const handleMobileNextRound = () => {
+    sound.playClick();
+    broadcast({
+      action: 'NEXT_ROUND',
+      round: round + 1,
     });
   };
 
@@ -255,14 +272,21 @@ export const FootballBingoMobileView: React.FC = () => {
         }
 
         // Bingo claimed
-        if (payload.action === 'BINGO_CLAIM' && payload.winner) {
+        if (payload.action === 'BINGO_CLAIM') {
           sound.playWhistle();
-          setRoundWinner(payload.winner);
+          const wId = payload.winnerId || payload.winner?.id || '';
+          const wName = payload.winnerName || payload.winner?.name || 'لاعب';
+          const r = payload.round || round;
+          setRoundWinner({ id: wId, name: wName, round: r });
           setPhase('ROUND_WIN');
         }
 
         // Next round started by TV
         if (payload.action === 'NEXT_ROUND') {
+          if (payload.phase === 'MATCH_OVER' || (payload.round && payload.round > maxRounds)) {
+            setPhase('MATCH_OVER');
+            return;
+          }
           setPhase('GAMEPLAY');
           setRound(payload.round || 2);
           if (payload.player) {
@@ -270,6 +294,7 @@ export const FootballBingoMobileView: React.FC = () => {
           }
           setHasAttemptedCurrentPlayer(false);
           setIsBingoAvailable(false);
+          setWinningIndices([]);
           setRoundWinner(null);
           // Generate fresh board for next round
           setBoard(generatePlayerBingoBoard());
@@ -379,9 +404,15 @@ export const FootballBingoMobileView: React.FC = () => {
                     <img
                       src={currentPlayer.photo}
                       alt={currentPlayer.name}
+                      referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
+                      loading="eager"
                       className="w-full h-full object-cover"
                       onError={e => {
-                        (e.target as HTMLElement).style.display = 'none';
+                        const target = e.currentTarget;
+                        if (!target.src.includes('wsrv.nl')) {
+                          target.src = `https://wsrv.nl/?url=${encodeURIComponent(currentPlayer.photo)}&w=300&output=webp`;
+                        }
                       }}
                     />
                   </div>
@@ -414,7 +445,7 @@ export const FootballBingoMobileView: React.FC = () => {
             </div>
 
             {/* 4x4 Bingo Grid Container (Visual Icons Only) */}
-            <div className="grid grid-cols-4 gap-2 w-full max-w-sm mx-auto my-auto p-1">
+            <div className="grid grid-cols-4 gap-2.5 w-full max-w-md mx-auto my-auto p-2">
               {board.map((tile, idx) => (
                 <BingoTile
                   key={tile.index}
@@ -449,24 +480,33 @@ export const FootballBingoMobileView: React.FC = () => {
         {/* 3. ROUND WIN CELEBRATION (MOBILE)                              */}
         {/* ============================================================== */}
         {phase === 'ROUND_WIN' && roundWinner && (
-          <div className="w-full max-w-sm bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 text-center my-auto">
+          <div className="w-full max-w-sm bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 text-center my-auto flex flex-col items-center">
             <div className="w-16 h-16 bg-[#C68B59] text-white rounded-full flex items-center justify-center border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] mx-auto mb-3">
               <Trophy size={32} />
             </div>
 
             <h3 className="text-2xl font-black text-[#2C2A29] mb-1">
-              {roundWinner.id === playerId ? 'مبروك! أنت بطل البينقو!' : `${roundWinner.name} بطل البينقو!`}
+              {roundWinner.id === playerId ? 'مبروك! أنت بطل الجولة!' : `${roundWinner.name} بطل الجولة!`}
             </h3>
 
             <p className="text-xs font-bold text-[#5C4033] mb-4">
               {roundWinner.id === playerId
                 ? 'قفلت الخط وصرخت بينقو بنجاح!'
-                : 'تم إعلان الفائز بالجولة.. استعد للجولة التالية من الشاشة.'}
+                : 'تم إعلان الفائز بالجولة.. استعد للجولة التالية!'}
             </p>
 
-            <span className="text-xs font-black text-[#8A9A5B] bg-[#E5E0D5] border border-[#2C2A29] px-3 py-1.5 rounded-lg inline-block">
+            <span className="text-xs font-black text-[#8A9A5B] bg-[#E5E0D5] border border-[#2C2A29] px-3 py-1.5 rounded-lg inline-block mb-6">
               الجولة {round} من {maxRounds}
             </span>
+
+            {/* Next Round Action Button */}
+            <button
+              type="button"
+              onClick={handleMobileNextRound}
+              className="w-full bg-[#8A9A5B] text-white px-8 py-3.5 rounded-xl font-black text-lg border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] hover:bg-[#2C2A29] active:translate-y-0.5 transition-all cursor-pointer"
+            >
+              {round < maxRounds ? 'جاهز للجولة التالية' : 'عرض التتويج النهائي'}
+            </button>
           </div>
         )}
 

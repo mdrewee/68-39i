@@ -16,56 +16,65 @@ export const BingoIconRenderer: FC<BingoIconRendererProps> = ({
 
   const isImageUrl = iconUrl && (iconUrl.startsWith('http://') || iconUrl.startsWith('https://'));
 
-  const imgDimensions = {
-    sm: 'w-7 h-7 md:w-8 md:h-8',
-    md: 'w-10 h-10 md:w-11 md:h-11',
-    lg: 'w-14 h-14 md:w-16 md:h-16',
-  }[size];
+  const containerDimensions = size === 'lg'
+    ? 'w-14 h-14 md:w-16 md:h-16'
+    : size === 'sm'
+    ? 'w-8 h-8 md:w-9 md:h-9'
+    : 'w-9 h-9 sm:w-11 sm:h-11';
 
-  // 1. High-Res Image Asset (Club Logo, National Flag, Trophy, Manager Headshot)
+  // 1. High-Res Image Asset (Club Logo, National Flag, Trophy, Manager Headshot, Dark Skin)
   if (isImageUrl) {
-    const isManager = category === 'manager';
+    const isPortrait = category === 'manager' || category === 'trait';
     const isFlag = category === 'country';
 
     return (
-      <div className={`flex flex-col items-center justify-center select-none w-full h-full p-0.5 ${className}`}>
+      <div className={`flex flex-col items-center justify-between select-none w-full h-full ${className}`}>
         <div
-          className={`${imgDimensions} flex items-center justify-center shrink-0 ${
-            isManager
+          className={`${containerDimensions} flex items-center justify-center shrink-0 my-auto ${
+            isPortrait
               ? 'rounded-full overflow-hidden border border-[#2C2A29] shadow-[1px_1px_0px_#2C2A29] bg-[#E5E0D5]'
               : isFlag
               ? 'rounded-md overflow-hidden border border-[#2C2A29]/30 shadow-[1px_1px_0px_#2C2A29]'
-              : ''
+              : 'object-contain'
           }`}
         >
           <img
             src={iconUrl}
             alt={label}
+            referrerPolicy="no-referrer"
+            crossOrigin="anonymous"
             loading="eager"
-            className={`w-full h-full ${isManager ? 'object-cover' : 'object-contain'} drop-shadow-sm`}
+            className={`w-full h-full ${isPortrait ? 'object-cover' : 'object-contain'} drop-shadow-sm`}
             onError={(e) => {
-              // Graceful text badge fallback if remote image is blocked
-              const target = e.target as HTMLElement;
-              target.style.display = 'none';
+              const target = e.currentTarget;
+              if (!target.src.includes('wsrv.nl')) {
+                target.src = `https://wsrv.nl/?url=${encodeURIComponent(iconUrl)}&w=300&output=webp`;
+              }
             }}
           />
         </div>
-        <span className="text-[9px] md:text-[10px] font-black text-[#2C2A29] mt-1 text-center truncate max-w-full px-0.5 leading-tight">
-          {label}
-        </span>
+        <div className="w-full text-center px-0.5 bg-[#E5E0D5]/60 rounded py-0.5 mt-auto">
+          <span className="text-[11px] sm:text-xs font-black text-[#2C2A29] block truncate leading-tight">
+            {label}
+          </span>
+        </div>
       </div>
     );
   }
 
   // 2. Positions, Shirt Numbers, and Physical Traits (Emojis / Badges)
   return (
-    <div className={`flex flex-col items-center justify-center select-none w-full h-full p-0.5 ${className}`}>
-      <span className={`${size === 'lg' ? 'text-3xl md:text-4xl' : size === 'sm' ? 'text-xl md:text-2xl' : 'text-2xl md:text-3xl'} select-none leading-none filter drop-shadow-sm`}>
-        {iconUrl}
-      </span>
-      <span className="text-[9px] md:text-[10px] font-black text-[#2C2A29] mt-1 text-center truncate max-w-full px-0.5 leading-tight">
-        {label}
-      </span>
+    <div className={`flex flex-col items-center justify-between select-none w-full h-full ${className}`}>
+      <div className={`${containerDimensions} flex items-center justify-center shrink-0 my-auto`}>
+        <span className={`${size === 'lg' ? 'text-3xl md:text-4xl' : size === 'sm' ? 'text-xl' : 'text-2xl sm:text-3xl'} select-none leading-none filter drop-shadow-sm`}>
+          {iconUrl}
+        </span>
+      </div>
+      <div className="w-full text-center px-0.5 bg-[#E5E0D5]/60 rounded py-0.5 mt-auto">
+        <span className="text-[11px] sm:text-xs font-black text-[#2C2A29] block truncate leading-tight">
+          {label}
+        </span>
+      </div>
     </div>
   );
 };

@@ -32,6 +32,10 @@ export interface FootballBingoEventPayload {
     name: string;
     round: number;
   };
+  winnerId?: string;
+  winnerName?: string;
+  board?: PlayerBingoTile[];
+  winningIndices?: number[];
   claimedCount?: number;
   playerId?: string;
   isReady?: boolean;

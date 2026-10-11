@@ -5,6 +5,7 @@ import { Play, Users, Trophy, Sparkles, RotateCcw, X, ShieldAlert } from 'lucide
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { FootballBingoTopBar } from './components/FootballBingoTopBar';
+import { BingoTile } from './components/BingoTile';
 import {
   FootballBingoPhase,
   FootballBingoPlayer,
@@ -12,6 +13,7 @@ import {
 } from './types';
 import {
   ActiveFootballer,
+  PlayerBingoTile,
   FOOTBALLERS_BINGO_MASTER,
 } from '../../../data/footballBingoData';
 import { sound } from '../../../lib/audio';
@@ -28,7 +30,13 @@ export const FootballBingoTVView: React.FC = () => {
   const [players, setPlayers] = useState<FootballBingoPlayer[]>([]);
   const [scores, setScores] = useState<Record<string, number>>({}); // playerId -> rounds won
   const [activePlayer, setActivePlayer] = useState<ActiveFootballer | null>(null);
-  const [roundWinner, setRoundWinner] = useState<{ id: string; name: string; round: number } | null>(null);
+  const [roundWinner, setRoundWinner] = useState<{
+    id: string;
+    name: string;
+    round: number;
+    board?: PlayerBingoTile[];
+    winningIndices?: number[];
+  } | null>(null);
 
   // 5-Second Roulette timer & progress
   const [progressPercent, setProgressPercent] = useState<number>(100);
@@ -274,27 +282,51 @@ export const FootballBingoTVView: React.FC = () => {
         }
 
         // BINGO CLAIM from mobile!
-        if (payload.action === 'BINGO_CLAIM' && payload.winner) {
+        if (payload.action === 'BINGO_CLAIM') {
           sound.playWhistle();
           setTimeout(() => sound.playVictory(), 200);
 
-          const w = payload.winner;
+          const winnerId = payload.winnerId || payload.winner?.id || '';
+          const winnerName = payload.winnerName || payload.winner?.name || 'لاعب';
+          const r = payload.round || roundRef.current;
+          const board = payload.board;
+          const winningIndices = payload.winningIndices || [];
+
+          const w = {
+            id: winnerId,
+            name: winnerName,
+            round: r,
+            board,
+            winningIndices,
+          };
+
           setRoundWinner(w);
           setPhase('ROUND_WIN');
 
-          setScores(prev => {
-            const next = { ...prev, [w.id]: (prev[w.id] || 0) + 1 };
-            scoresRef.current = next;
-            return next;
-          });
+          if (winnerId) {
+            setScores(prev => {
+              const next = { ...prev, [winnerId]: (prev[winnerId] || 0) + 1 };
+              scoresRef.current = next;
+              return next;
+            });
+          }
 
           // Broadcast round win lock to all players
           broadcastEvent({
             action: 'BINGO_CLAIM',
             phase: 'ROUND_WIN',
-            winner: w,
+            winnerId,
+            winnerName,
+            winner: { id: winnerId, name: winnerName, round: r },
+            board,
+            winningIndices,
             scores: scoresRef.current,
           });
+        }
+
+        // Mobile requested next round
+        if (payload.action === 'NEXT_ROUND' && phaseRef.current === 'ROUND_WIN') {
+          handleNextRound();
         }
       })
       .subscribe(status => {
@@ -473,9 +505,15 @@ export const FootballBingoTVView: React.FC = () => {
                 <img
                   src={activePlayer.photo}
                   alt={activePlayer.name}
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
+                  loading="eager"
                   className="w-full h-full object-cover"
                   onError={e => {
-                    (e.target as HTMLElement).style.display = 'none';
+                    const target = e.currentTarget;
+                    if (!target.src.includes('wsrv.nl')) {
+                      target.src = `https://wsrv.nl/?url=${encodeURIComponent(activePlayer.photo)}&w=300&output=webp`;
+                    }
                   }}
                 />
               </div>
@@ -507,33 +545,51 @@ export const FootballBingoTVView: React.FC = () => {
         )}
 
         {/* ============================================================== */}
-        {/* 3. ROUND WIN CELEBRATION                                       */}
+        {/* 3. ROUND WIN CELEBRATION & SHOWCASE WINNER BOARD               */}
         {/* ============================================================== */}
         {phase === 'ROUND_WIN' && roundWinner && (
-          <div className="w-full max-w-xl bg-[#F7F4EC] border-4 border-[#2C2A29] shadow-[8px_8px_0px_#2C2A29] rounded-3xl p-8 flex flex-col items-center text-center my-auto">
-            <div className="w-20 h-20 bg-[#C68B59] text-white rounded-full flex items-center justify-center border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] mb-4">
-              <Trophy size={42} />
+          <div className="w-full max-w-3xl bg-[#F7F4EC] border-4 border-[#2C2A29] shadow-[8px_8px_0px_#2C2A29] rounded-3xl p-6 md:p-8 flex flex-col items-center text-center my-auto overflow-y-auto max-h-[92vh]">
+            <div className="flex items-center justify-center gap-3 mb-2">
+              <div className="w-12 h-12 md:w-14 md:h-14 bg-[#C68B59] text-white rounded-full flex items-center justify-center border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29]">
+                <Trophy size={28} />
+              </div>
+              <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29]">
+                {roundWinner.name} بطل الجولة!
+              </h2>
             </div>
 
-            <span className="text-sm font-bold text-[#8A9A5B] uppercase tracking-wider mb-1">
-              صافرة الحكم أعلنت الفائز!
-            </span>
-
-            <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29] mb-3">
-              {roundWinner.name} بطل البينقو!
-            </h2>
-
-            <p className="text-sm md:text-base font-bold text-[#5C4033] mb-6">
-              نجح في تقفيل خط كامل وصرخ بينقو في الجولة {round}!
+            <p className="text-xs md:text-sm font-bold text-[#5C4033] mb-4">
+              لوحة الفائز المطابقة (المربعات المحددة بالأخضر حققت البينقو):
             </p>
 
-            {/* Action to proceed */}
+            {/* Winner's 4x4 Board Showcase */}
+            {roundWinner.board && roundWinner.board.length === 16 ? (
+              <div className="grid grid-cols-4 gap-2 w-full max-w-sm sm:max-w-md mb-6 p-2 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-2xl shadow-[3px_3px_0px_#2C2A29]">
+                {roundWinner.board.map((tile, idx) => {
+                  const isWinningTile = (roundWinner.winningIndices || []).includes(idx);
+                  return (
+                    <BingoTile
+                      key={tile.index ?? idx}
+                      tile={tile}
+                      disabled={true}
+                      isWinningTile={isWinningTile}
+                    />
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="w-full max-w-md py-4 text-center text-sm font-bold text-[#8A8580] mb-4">
+                نجح في تقفيل خط كامل وصرخ بينقو في الجولة {round}!
+              </div>
+            )}
+
+            {/* Next Round Action Button */}
             <button
               type="button"
               onClick={handleNextRound}
-              className="w-full bg-[#8A9A5B] text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] py-3.5 rounded-xl font-black text-lg hover:bg-[#2C2A29] active:translate-y-0.5 transition-all cursor-pointer"
+              className="bg-[#8A9A5B] text-white px-8 py-3.5 rounded-xl font-black text-lg border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] hover:bg-[#2C2A29] active:translate-y-0.5 transition-all cursor-pointer"
             >
-              {round < maxRounds ? `الجولة التالية (${round + 1} من ${maxRounds})` : 'عرض التتويج النهائي'}
+              {round < maxRounds ? 'جاهز للجولة التالية' : 'عرض التتويج النهائي'}
             </button>
           </div>
         )}

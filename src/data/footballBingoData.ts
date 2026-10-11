@@ -304,7 +304,13 @@ export const BINGO_TILES_BANK: BingoTileDefinition[] = [
   { id: 'num_7', category: 'number', targetValue: 7, label: 'رقم 7', iconUrl: '7️⃣' },
   { id: 'num_10', category: 'number', targetValue: 10, label: 'رقم 10', iconUrl: '🔟' },
   { id: 'trait_left', category: 'trait', targetValue: 'left_foot', label: 'أشول (قدم يسرى)', iconUrl: '🦶' },
-  { id: 'trait_dark', category: 'trait', targetValue: 'dark_skin', label: 'لاعب أسمر', iconUrl: '🏿' },
+  {
+    id: 'trait_dark',
+    category: 'trait',
+    targetValue: 'dark_skin',
+    label: 'بشرة سمراء',
+    iconUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80',
+  },
 ];
 
 // -------------------------------------------------------------
@@ -896,27 +902,43 @@ export const evaluateTileMatch = (
 };
 
 // Pattern Verification: Rows, Columns, Diagonals, and 4 Corners
-export const checkBingoWin = (board: PlayerBingoTile[]): boolean => {
-  if (!board || board.length < 16) return false;
+export const checkBingoWinDetails = (board: PlayerBingoTile[]): { won: boolean; winningIndices: number[] } => {
+  if (!board || board.length < 16) return { won: false, winningIndices: [] };
   const claimed = board.map((t) => t.isClaimed);
 
   // Rows (4)
   for (let r = 0; r < 4; r++) {
     const start = r * 4;
-    if (claimed[start] && claimed[start + 1] && claimed[start + 2] && claimed[start + 3]) return true;
+    const indices = [start, start + 1, start + 2, start + 3];
+    if (indices.every((i) => claimed[i])) {
+      return { won: true, winningIndices: indices };
+    }
   }
 
   // Columns (4)
   for (let c = 0; c < 4; c++) {
-    if (claimed[c] && claimed[c + 4] && claimed[c + 8] && claimed[c + 12]) return true;
+    const indices = [c, c + 4, c + 8, c + 12];
+    if (indices.every((i) => claimed[i])) {
+      return { won: true, winningIndices: indices };
+    }
   }
 
   // Diagonals (2)
-  if (claimed[0] && claimed[5] && claimed[10] && claimed[15]) return true;
-  if (claimed[3] && claimed[6] && claimed[9] && claimed[12]) return true;
+  if ([0, 5, 10, 15].every((i) => claimed[i])) {
+    return { won: true, winningIndices: [0, 5, 10, 15] };
+  }
+  if ([3, 6, 9, 12].every((i) => claimed[i])) {
+    return { won: true, winningIndices: [3, 6, 9, 12] };
+  }
 
   // 4 Corners (1)
-  if (claimed[0] && claimed[3] && claimed[12] && claimed[15]) return true;
+  if ([0, 3, 12, 15].every((i) => claimed[i])) {
+    return { won: true, winningIndices: [0, 3, 12, 15] };
+  }
 
-  return false;
+  return { won: false, winningIndices: [] };
+};
+
+export const checkBingoWin = (board: PlayerBingoTile[]): boolean => {
+  return checkBingoWinDetails(board).won;
 };
