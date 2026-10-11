@@ -5,7 +5,7 @@ import { Play, Users, Trophy, Sparkles, RotateCcw, Link as LinkIcon, CheckCircle
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { MutualLinkTopBar } from './components/MutualLinkTopBar';
-import { SafeImage } from './components/SafeImage';
+import { SafeEntityBadge } from './components/SafeEntityBadge';
 import {
   MutualLinkPhase,
   MutualLinkPlayer,
@@ -14,6 +14,7 @@ import {
 import {
   MutualLinkChallenge,
   generateMutualLinkChallenges,
+  enrichChallengeFromDb,
 } from '../../../utils/mutualLinkEngine';
 import { normalizeArabicFootball } from '../../../utils/footballSearch';
 import { sound } from '../../../lib/audio';
@@ -251,9 +252,9 @@ export const MutualLinkTVView: React.FC = () => {
         scores: newScores,
       });
 
-      // Auto advance after 3 seconds
-      setAdvanceCountdown(3);
-      let count = 3;
+      // Auto advance after 4 seconds
+      setAdvanceCountdown(4);
+      let count = 4;
       const cdTimer = setInterval(() => {
         count--;
         setAdvanceCountdown(count);
@@ -263,7 +264,7 @@ export const MutualLinkTVView: React.FC = () => {
         }
       }, 1000);
     } else {
-      // Wrong guess: lockout wrong contestant for 5s
+      // Wrong guess: lockout wrong contestant for 4s
       sound.playIncorrect();
       broadcastEvent({
         action: 'WRONG_GUESS',
@@ -312,9 +313,9 @@ export const MutualLinkTVView: React.FC = () => {
           otherOptions: others,
         });
 
-        // Auto advance after 3 seconds
-        setAdvanceCountdown(3);
-        let count = 3;
+        // Auto advance after 4 seconds
+        setAdvanceCountdown(4);
+        let count = 4;
         const cdTimer = setInterval(() => {
           count--;
           setAdvanceCountdown(count);
@@ -570,12 +571,12 @@ export const MutualLinkTVView: React.FC = () => {
               <span className="inline-block bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-4 py-1 rounded-xl text-xs font-black text-[#5C4033]">
                 {currentChallenge.type === 'CLUB_TO_CLUB'
                   ? 'تحدي نادي ضد نادي 🛡️'
-                  : 'تحدي لاعب ضد لاعب 🏃‍♂️'}
+                  : 'تحدي نادي مشترك 🛡️'}
               </span>
               <h2 className="text-2xl md:text-4xl font-black text-[#2C2A29] tracking-tight">
                 {currentChallenge.type === 'CLUB_TO_CLUB'
                   ? 'من هو اللاعب الذي لعب للناديين معاً؟'
-                  : 'ما هو النادي أو المنتخب المشترك بين النجمين؟'}
+                  : 'ما هو النادي المشترك بين النجمين؟'}
               </h2>
             </div>
 
@@ -584,9 +585,10 @@ export const MutualLinkTVView: React.FC = () => {
               {/* Entity A Card (Left) */}
               <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-4 hover:shadow-[6px_6px_0px_#2C2A29] transition-all">
                 <div className="w-36 h-36 md:w-44 md:h-44 bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl overflow-hidden flex items-center justify-center p-2 relative">
-                  <SafeImage
+                  <SafeEntityBadge
                     src={currentChallenge.entityA.image}
-                    alt={currentChallenge.entityA.name}
+                    name={currentChallenge.entityA.name}
+                    type={currentChallenge.type === 'CLUB_TO_CLUB' ? 'club' : 'player'}
                   />
                 </div>
                 <h3 className="text-xl md:text-2xl font-black text-[#2C2A29]">
@@ -613,9 +615,10 @@ export const MutualLinkTVView: React.FC = () => {
                   // Revealed Answer Card (Static crisp brutalist)
                   <div className="w-44 h-52 md:w-52 md:h-60 bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-2xl flex flex-col items-center justify-center text-center p-4 z-10">
                     <div className="w-24 h-24 md:w-28 md:h-28 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl overflow-hidden p-1 mb-2">
-                      <SafeImage
+                      <SafeEntityBadge
                         src={currentChallenge.revealItem.image}
-                        alt={currentChallenge.revealItem.name}
+                        name={currentChallenge.revealItem.name}
+                        type={currentChallenge.type === 'CLUB_TO_CLUB' ? 'player' : 'club'}
                       />
                     </div>
                     <span className="text-xs font-bold text-[#8A9A5B]">حلقة الوصل هي</span>
@@ -634,9 +637,10 @@ export const MutualLinkTVView: React.FC = () => {
               {/* Entity B Card (Right) */}
               <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-4 hover:shadow-[6px_6px_0px_#2C2A29] transition-all">
                 <div className="w-36 h-36 md:w-44 md:h-44 bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl overflow-hidden flex items-center justify-center p-2 relative">
-                  <SafeImage
+                  <SafeEntityBadge
                     src={currentChallenge.entityB.image}
-                    alt={currentChallenge.entityB.name}
+                    name={currentChallenge.entityB.name}
+                    type={currentChallenge.type === 'CLUB_TO_CLUB' ? 'club' : 'player'}
                   />
                 </div>
                 <h3 className="text-xl md:text-2xl font-black text-[#2C2A29]">

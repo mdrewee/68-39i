@@ -8,8 +8,8 @@ import {
 } from './types';
 import { MutualLinkChallenge } from '../../../utils/mutualLinkEngine';
 import { searchFootballPlayers } from '../../../utils/footballSearch';
-import { FOOTBALL_CLUBS_MASTER, LOCAL_COUNTRY_FLAGS } from '../../../data/footballMasterData';
-import { SafeImage } from './components/SafeImage';
+import { FOOTBALL_CLUBS_MASTER } from '../../../data/footballMasterData';
+import { SafeEntityBadge } from './components/SafeEntityBadge';
 import { sound } from '../../../lib/audio';
 import { Trophy, Send } from 'lucide-react';
 
@@ -71,11 +71,9 @@ export const MutualLinkMobileView: FC = () => {
       const players = searchFootballPlayers(trimmed, 6);
       setSuggestions(players.map(p => p.name));
     } else {
-      // Suggest club or country names
+      // Suggest club names strictly (Clubs Only Rule - No National Teams)
       const clubNames = FOOTBALL_CLUBS_MASTER.map(c => c.name);
-      const countryNames = Object.keys(LOCAL_COUNTRY_FLAGS);
-      const allEntities = Array.from(new Set([...clubNames, ...countryNames]));
-      const hits = allEntities.filter(name => name.includes(trimmed)).slice(0, 6);
+      const hits = clubNames.filter(name => name.includes(trimmed)).slice(0, 6);
       setSuggestions(hits);
     }
   }, [query, currentChallenge, isLockedOut]);
@@ -186,13 +184,13 @@ export const MutualLinkMobileView: FC = () => {
           }
         } else if (ev.action === 'WRONG_GUESS') {
           if (ev.playerId === playerIdRef.current) {
-            // Lockout me for 5 seconds
+            // Lockout me for 4 seconds
             setIsLockedOut(true);
             setIsShaking(true);
-            setLockoutSec(5);
+            setLockoutSec(4);
             setTimeout(() => setIsShaking(false), 600);
 
-            let count = 5;
+            let count = 4;
             const lockoutTimer = setInterval(() => {
               count--;
               setLockoutSec(count);
@@ -348,14 +346,16 @@ export const MutualLinkMobileView: FC = () => {
               <div className="text-center text-xs font-black text-[#5C4033] mb-2">
                 {currentChallenge.type === 'CLUB_TO_CLUB'
                   ? 'من هو اللاعب الذي لعب للناديين؟ ⚽'
-                  : 'ما هو النادي أو المنتخب المشترك؟ 🛡️'}
+                  : 'ما هو النادي المشترك بين النجمين؟ 🛡️'}
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <div className="flex flex-col items-center text-center">
                   <div className="w-16 h-16 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl overflow-hidden p-1 flex items-center justify-center">
-                    <SafeImage
+                    <SafeEntityBadge
                       src={currentChallenge.entityA.image}
-                      alt={currentChallenge.entityA.name}
+                      name={currentChallenge.entityA.name}
+                      type={currentChallenge.type === 'CLUB_TO_CLUB' ? 'club' : 'player'}
+                      className="w-full h-full object-contain"
                     />
                   </div>
                   <span className="text-[11px] font-black text-[#2C2A29] mt-1 truncate max-w-[90px]">
@@ -371,9 +371,11 @@ export const MutualLinkMobileView: FC = () => {
 
                 <div className="flex flex-col items-center text-center">
                   <div className="w-16 h-16 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl overflow-hidden p-1 flex items-center justify-center">
-                    <SafeImage
+                    <SafeEntityBadge
                       src={currentChallenge.entityB.image}
-                      alt={currentChallenge.entityB.name}
+                      name={currentChallenge.entityB.name}
+                      type={currentChallenge.type === 'CLUB_TO_CLUB' ? 'club' : 'player'}
+                      className="w-full h-full object-contain"
                     />
                   </div>
                   <span className="text-[11px] font-black text-[#2C2A29] mt-1 truncate max-w-[90px]">
@@ -398,7 +400,7 @@ export const MutualLinkMobileView: FC = () => {
                 <div className="w-full bg-[#2C2A29] h-2 rounded-full overflow-hidden mt-3">
                   <div
                     className="bg-[#F7F4EC] h-full transition-all duration-1000"
-                    style={{ width: `${(lockoutSec / 5) * 100}%` }}
+                    style={{ width: `${(lockoutSec / 4) * 100}%` }}
                   />
                 </div>
               </div>
@@ -413,7 +415,7 @@ export const MutualLinkMobileView: FC = () => {
                     placeholder={
                       currentChallenge.type === 'CLUB_TO_CLUB'
                         ? 'ابحث بالاسم: مثلاً بنزيما، سالم...'
-                        : 'ابحث عن النادي أو المنتخب...'
+                        : 'ابحث عن النادي المشترك: مثلاً الهلال، الريال...'
                     }
                     className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl px-4 py-3 font-black text-sm text-[#2C2A29] focus:outline-none focus:bg-white"
                   />
