@@ -16,7 +16,7 @@ import {
   generateMutualLinkChallenges,
   enrichChallengeFromDb,
 } from '../../../utils/mutualLinkEngine';
-import { normalizeArabicFootball } from '../../../utils/footballSearch';
+import { normalizeArabicFootball, validateMutualAnswer } from '../../../utils/footballHistoryEngine';
 import { sound } from '../../../lib/audio';
 
 export const MutualLinkTVView: React.FC = () => {
@@ -174,7 +174,10 @@ export const MutualLinkTVView: React.FC = () => {
     if (!normGuess) return;
 
     // Check if guess matches ANY valid player/entity in the exhaustive set
-    const isCorrect = challenge.validAnswers.includes(normGuess) ||
+    const isCorrect =
+      validateMutualAnswer(guessText, challenge.validAnswers) ||
+      validateMutualAnswer(guessText, challenge.validDisplayNames) ||
+      challenge.validAnswers.includes(normGuess) ||
       challenge.validDisplayNames.some(d => normalizeArabicFootball(d) === normGuess);
 
     if (isCorrect) {
@@ -185,7 +188,8 @@ export const MutualLinkTVView: React.FC = () => {
       if (challenge.type === 'CLUB_TO_CLUB' && challenge.matchingPlayers) {
         const foundPlayer = challenge.matchingPlayers.find(p =>
           normalizeArabicFootball(p.name) === normGuess ||
-          p.aliases.some(a => normalizeArabicFootball(a) === normGuess)
+          p.aliases.some(a => normalizeArabicFootball(a) === normGuess) ||
+          validateMutualAnswer(guessText, [p.name, ...p.aliases])
         );
         if (foundPlayer) {
           matchedOfficialName = foundPlayer.name;
@@ -193,7 +197,8 @@ export const MutualLinkTVView: React.FC = () => {
         }
       } else {
         const foundEntity = challenge.validDisplayNames.find(
-          d => normalizeArabicFootball(d) === normGuess
+          d => normalizeArabicFootball(d) === normGuess ||
+               validateMutualAnswer(guessText, [d])
         );
         if (foundEntity) matchedOfficialName = foundEntity;
       }
@@ -573,11 +578,15 @@ export const MutualLinkTVView: React.FC = () => {
                   ? 'تحدي نادي ضد نادي 🛡️'
                   : 'تحدي نادي مشترك 🛡️'}
               </span>
-              <h2 className="text-2xl md:text-4xl font-black text-[#2C2A29] tracking-tight">
-                {currentChallenge.type === 'CLUB_TO_CLUB'
-                  ? 'من هو اللاعب الذي لعب للناديين معاً؟'
-                  : 'ما هو النادي المشترك بين النجمين؟'}
-              </h2>
+              {currentChallenge.type === 'CLUB_TO_CLUB' ? (
+                <h2 className="text-2xl sm:text-3xl font-black text-[#2C2A29] mb-4">
+                  من هو اللاعب الذي لعب للناديين؟
+                </h2>
+              ) : (
+                <h2 className="text-2xl sm:text-3xl font-black text-[#2C2A29] mb-4">
+                  ما هو النادي المشترك بين اللاعبين؟
+                </h2>
+              )}
             </div>
 
             {/* The Brutalist Link Arena (Entity A <== [ ؟ ] ==> Entity B) */}
@@ -586,9 +595,13 @@ export const MutualLinkTVView: React.FC = () => {
               <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-4 hover:shadow-[6px_6px_0px_#2C2A29] transition-all">
                 <div className="w-36 h-36 md:w-44 md:h-44 bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl overflow-hidden flex items-center justify-center p-2 relative">
                   <SafeEntityBadge
+                    key={`${currentChallenge.id}_${currentChallenge.entityA.name}`}
+                    id={`${currentChallenge.id}_entityA`}
                     src={currentChallenge.entityA.image}
-                    name={currentChallenge.entityA.name}
-                    type={currentChallenge.type === 'CLUB_TO_CLUB' ? 'club' : 'player'}
+                    alt={currentChallenge.entityA.name}
+                    fallbackText={currentChallenge.entityA.name}
+                    fallbackColor="#8A9A5B"
+                    className="w-full h-full"
                   />
                 </div>
                 <h3 className="text-xl md:text-2xl font-black text-[#2C2A29]">
@@ -614,11 +627,15 @@ export const MutualLinkTVView: React.FC = () => {
                 ) : (
                   // Revealed Answer Card (Static crisp brutalist)
                   <div className="w-44 h-52 md:w-52 md:h-60 bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-2xl flex flex-col items-center justify-center text-center p-4 z-10">
-                    <div className="w-24 h-24 md:w-28 md:h-28 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl overflow-hidden p-1 mb-2">
+                    <div className="w-24 h-24 md:w-28 md:h-28 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl overflow-hidden p-1 mb-2 flex items-center justify-center">
                       <SafeEntityBadge
+                        key={`${currentChallenge.id}_reveal_${currentChallenge.revealItem.name}`}
+                        id={`${currentChallenge.id}_reveal`}
                         src={currentChallenge.revealItem.image}
-                        name={currentChallenge.revealItem.name}
-                        type={currentChallenge.type === 'CLUB_TO_CLUB' ? 'player' : 'club'}
+                        alt={currentChallenge.revealItem.name}
+                        fallbackText={currentChallenge.revealItem.name}
+                        fallbackColor="#8A9A5B"
+                        className="w-full h-full"
                       />
                     </div>
                     <span className="text-xs font-bold text-[#8A9A5B]">حلقة الوصل هي</span>
@@ -638,9 +655,13 @@ export const MutualLinkTVView: React.FC = () => {
               <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 flex flex-col items-center justify-center text-center space-y-4 hover:shadow-[6px_6px_0px_#2C2A29] transition-all">
                 <div className="w-36 h-36 md:w-44 md:h-44 bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl overflow-hidden flex items-center justify-center p-2 relative">
                   <SafeEntityBadge
+                    key={`${currentChallenge.id}_${currentChallenge.entityB.name}`}
+                    id={`${currentChallenge.id}_entityB`}
                     src={currentChallenge.entityB.image}
-                    name={currentChallenge.entityB.name}
-                    type={currentChallenge.type === 'CLUB_TO_CLUB' ? 'club' : 'player'}
+                    alt={currentChallenge.entityB.name}
+                    fallbackText={currentChallenge.entityB.name}
+                    fallbackColor="#8A9A5B"
+                    className="w-full h-full"
                   />
                 </div>
                 <h3 className="text-xl md:text-2xl font-black text-[#2C2A29]">

@@ -7,8 +7,7 @@ import {
   MutualLinkEventPayload,
 } from './types';
 import { MutualLinkChallenge } from '../../../utils/mutualLinkEngine';
-import { searchFootballPlayers } from '../../../utils/footballSearch';
-import { FOOTBALL_CLUBS_MASTER } from '../../../data/footballMasterData';
+import { PLAYERS_DB, CLUBS_DB, normalizeArabicFootball } from '../../../utils/footballHistoryEngine';
 import { SafeEntityBadge } from './components/SafeEntityBadge';
 import { sound } from '../../../lib/audio';
 import { Trophy, Send } from 'lucide-react';
@@ -66,15 +65,21 @@ export const MutualLinkMobileView: FC = () => {
       return;
     }
 
+    const norm = normalizeArabicFootball(trimmed);
     if (currentChallenge?.type === 'CLUB_TO_CLUB') {
-      // Suggest player names
-      const players = searchFootballPlayers(trimmed, 6);
-      setSuggestions(players.map(p => p.name));
+      // Suggest player names from in-memory PLAYERS_DB
+      const hits = PLAYERS_DB.filter(p =>
+        normalizeArabicFootball(p.name).includes(norm) ||
+        p.aliases.some(a => normalizeArabicFootball(a).includes(norm))
+      ).slice(0, 6);
+      setSuggestions(hits.map(p => p.name));
     } else {
       // Suggest club names strictly (Clubs Only Rule - No National Teams)
-      const clubNames = FOOTBALL_CLUBS_MASTER.map(c => c.name);
-      const hits = clubNames.filter(name => name.includes(trimmed)).slice(0, 6);
-      setSuggestions(hits);
+      const hits = CLUBS_DB.filter(c =>
+        normalizeArabicFootball(c.name).includes(norm) ||
+        c.aliases.some(a => normalizeArabicFootball(a).includes(norm))
+      ).slice(0, 6);
+      setSuggestions(hits.map(c => c.name));
     }
   }, [query, currentChallenge, isLockedOut]);
 
@@ -352,9 +357,12 @@ export const MutualLinkMobileView: FC = () => {
                 <div className="flex flex-col items-center text-center">
                   <div className="w-16 h-16 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl overflow-hidden p-1 flex items-center justify-center">
                     <SafeEntityBadge
+                      key={`${currentChallenge.id}_${currentChallenge.entityA.name}`}
+                      id={`${currentChallenge.id}_entityA`}
                       src={currentChallenge.entityA.image}
-                      name={currentChallenge.entityA.name}
-                      type={currentChallenge.type === 'CLUB_TO_CLUB' ? 'club' : 'player'}
+                      alt={currentChallenge.entityA.name}
+                      fallbackText={currentChallenge.entityA.name}
+                      fallbackColor="#8A9A5B"
                       className="w-full h-full object-contain"
                     />
                   </div>
@@ -372,9 +380,12 @@ export const MutualLinkMobileView: FC = () => {
                 <div className="flex flex-col items-center text-center">
                   <div className="w-16 h-16 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl overflow-hidden p-1 flex items-center justify-center">
                     <SafeEntityBadge
+                      key={`${currentChallenge.id}_${currentChallenge.entityB.name}`}
+                      id={`${currentChallenge.id}_entityB`}
                       src={currentChallenge.entityB.image}
-                      name={currentChallenge.entityB.name}
-                      type={currentChallenge.type === 'CLUB_TO_CLUB' ? 'club' : 'player'}
+                      alt={currentChallenge.entityB.name}
+                      fallbackText={currentChallenge.entityB.name}
+                      fallbackColor="#8A9A5B"
                       className="w-full h-full object-contain"
                     />
                   </div>

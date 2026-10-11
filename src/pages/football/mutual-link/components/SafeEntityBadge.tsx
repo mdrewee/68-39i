@@ -1,56 +1,59 @@
-import React, { useState, FC } from 'react';
+import React, { useState, useEffect } from 'react';
 
-export interface SafeEntityBadgeProps {
-  src?: string;
-  name: string;
-  alt?: string;
+interface SafeEntityBadgeProps {
+  id?: string;
+  src: string;
+  alt: string;
+  fallbackText: string;
+  fallbackColor?: string;
   className?: string;
-  type?: 'club' | 'player';
 }
 
-export const SafeEntityBadge: FC<SafeEntityBadgeProps> = ({
+export const SafeEntityBadge: React.FC<SafeEntityBadgeProps> = ({
+  id,
   src,
-  name,
   alt,
-  className = 'w-full h-full object-contain',
-  type = 'club',
+  fallbackText,
+  fallbackColor = '#2C2A29',
+  className = 'w-28 h-28 sm:w-36 sm:h-36'
 }) => {
-  const [hasError, setHasError] = useState(false);
-  const [triedProxy, setTriedProxy] = useState(false);
-  const [currentSrc, setCurrentSrc] = useState(src || '');
+  const [imgError, setImgError] = useState(false);
 
-  const handleError = () => {
-    if (!triedProxy && currentSrc && !currentSrc.includes('wsrv.nl') && !currentSrc.startsWith('data:')) {
-      setTriedProxy(true);
-      setCurrentSrc(`https://wsrv.nl/?url=${encodeURIComponent(currentSrc)}&w=250&output=webp`);
-    } else {
-      setHasError(true);
-    }
-  };
+  // Reset error state on src or id change
+  useEffect(() => {
+    setImgError(false);
+  }, [src, id]);
 
-  if (hasError || !currentSrc) {
-    // Brutalist Off-White #F7F4EC text badge fallback with bold club/player text
+  if (imgError || !src) {
     return (
-      <div className="w-full h-full bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-xl flex flex-col items-center justify-center p-2 text-center select-none shadow-[2px_2px_0px_#2C2A29]">
-        <div className="w-8 h-8 rounded-full bg-[#8A9A5B] border border-[#2C2A29] flex items-center justify-center text-sm font-black text-[#F7F4EC] mb-1">
-          {type === 'club' ? '🛡️' : '⚽'}
+      <div
+        className={`${className} rounded-2xl border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] bg-[#F7F4EC] flex flex-col items-center justify-center p-3 text-center select-none`}
+      >
+        <div
+          className="w-10 h-10 rounded-full border-2 border-[#2C2A29] mb-1 flex items-center justify-center font-black text-sm text-white"
+          style={{ backgroundColor: fallbackColor }}
+        >
+          {fallbackText.slice(0, 2)}
         </div>
-        <span className="font-black text-xs md:text-sm text-[#2C2A29] leading-tight line-clamp-2">
-          {name}
+        <span className="font-black text-xs sm:text-sm text-[#2C2A29] leading-tight">
+          {fallbackText}
         </span>
       </div>
     );
   }
 
   return (
-    <img
-      src={currentSrc}
-      alt={alt || name}
-      referrerPolicy="no-referrer"
-      crossOrigin="anonymous"
-      loading="eager"
-      onError={handleError}
-      className={className}
-    />
+    <div className={`${className} relative flex items-center justify-center p-2`}>
+      <img
+        key={`${id}_${src}`}
+        src={src}
+        alt={alt}
+        referrerPolicy="no-referrer"
+        crossOrigin="anonymous"
+        loading="eager"
+        onError={() => setImgError(true)}
+        className="w-full h-full object-contain drop-shadow-md select-none transition-transform duration-200"
+      />
+    </div>
   );
 };
