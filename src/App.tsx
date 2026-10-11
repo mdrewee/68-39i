@@ -107,6 +107,11 @@ export function App() {
         <Route path="/room/:code/eshrah/move-the-puppet-play" element={<PlayerMobileView />} />
         <Route path="/room/:code/eshrah/move-the-puppet-tv" element={<TVScreenView />} />
 
+        {/* Football Suite - Football Bingo */}
+        <Route path="/room/:code/football/football-bingo" element={<PlayerMobileView />} />
+        <Route path="/room/:code/football/football-bingo-play" element={<PlayerMobileView />} />
+        <Route path="/room/:code/football/football-bingo-tv" element={<TVScreenView />} />
+
         {/* Player Join & Mobile Controller View */}
         <Route path="/room/:code/join" element={<MobileJoinPage />} />
         <Route path="/room/:code/play" element={<PlayerMobileView />} />

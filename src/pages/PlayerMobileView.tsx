@@ -21,6 +21,7 @@ import { WalaKalimaMobileView } from './eshrah/WalaKalima/WalaKalimaMobileView';
 import { ForbiddenWordsMobileView } from './eshrah/ForbiddenWords/ForbiddenWordsMobileView';
 import { OneWordMobileView } from './eshrah/OneWord/OneWordMobileView';
 import { MoveThePuppetMobileView } from './eshrah/MoveThePuppet/MoveThePuppetMobileView';
+import { FootballBingoMobileView } from './football/football-bingo/FootballBingoMobileView';
 import { MobileTopBar } from '../components/MobileTopBar';
 import { getOrCreatePlayerId, getOrCreatePlayerName, clearPlayerSession } from '../utils/playerSession';
 import { useSafeCountdown } from '../hooks/useSafeCountdown';
@@ -435,6 +436,12 @@ export const PlayerMobileView: React.FC = () => {
     path.includes('move-the-puppet')
   ) {
     return <MoveThePuppetMobileView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'football-bingo' ||
+    path.includes('football-bingo')
+  ) {
+    return <FootballBingoMobileView />;
   }
 
   // Fallbacks based on active states if selectedGameId is not explicitly set

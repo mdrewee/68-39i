@@ -158,4 +158,21 @@ export const CATEGORIES_REGISTRY: CategoryItem[] = [
       },
     ],
   },
+  {
+    id: 'football',
+    title: 'كرة قدم',
+    description: 'تحديات كروية وسرعة بديهة وبينقو النجوم والأندية العالمية',
+    icon: 'Trophy',
+    color: '#8A9A5B',
+    games: [
+      {
+        id: 'football-bingo',
+        title: 'بينقو الكروي',
+        description: 'لوحة بينقو 16 مربع بصري.. كل ثانيتين ينزل لاعب عشوائي على الشاشة، اربطه بالمربع الصح وأول من يقفل خط يصرخ بينقو!',
+        route: '/room/:code/football/football-bingo',
+        icon: 'Grid',
+      },
+    ],
+  },
 ];
+

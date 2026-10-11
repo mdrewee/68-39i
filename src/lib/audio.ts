@@ -326,6 +326,40 @@ class SoundEngine {
   public playBuzzerHit() {
     this.playBuzzer();
   }
+
+  // Synthesized double-tone trill referee whistle
+  public playWhistle() {
+    if (this.isMuted) return;
+    const ctx = this.getContext();
+    if (!ctx) return;
+
+    try {
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc1.type = 'triangle';
+      osc2.type = 'sawtooth';
+
+      osc1.frequency.setValueAtTime(2400, ctx.currentTime);
+      osc2.frequency.setValueAtTime(2650, ctx.currentTime);
+
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.setValueAtTime(0.25, ctx.currentTime + 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc1.start();
+      osc2.start();
+      osc1.stop(ctx.currentTime + 0.45);
+      osc2.stop(ctx.currentTime + 0.45);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export const sound = new SoundEngine();
