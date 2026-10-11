@@ -12,7 +12,7 @@ import {
 } from './types';
 import {
   ActiveFootballer,
-  FOOTBALL_BINGO_PLAYERS,
+  FOOTBALLERS_BINGO_MASTER,
 } from '../../../data/footballBingoData';
 import { sound } from '../../../lib/audio';
 
@@ -30,12 +30,12 @@ export const FootballBingoTVView: React.FC = () => {
   const [activePlayer, setActivePlayer] = useState<ActiveFootballer | null>(null);
   const [roundWinner, setRoundWinner] = useState<{ id: string; name: string; round: number } | null>(null);
 
-  // 2-Second Roulette timer & progress
+  // 5-Second Roulette timer & progress
   const [progressPercent, setProgressPercent] = useState<number>(100);
   const [lobbyCountdown, setLobbyCountdown] = useState<number | null>(null);
 
   // Unused players pool per round to prevent duplicates
-  const unusedPlayersRef = useRef<ActiveFootballer[]>([...FOOTBALL_BINGO_PLAYERS]);
+  const unusedPlayersRef = useRef<ActiveFootballer[]>([...FOOTBALLERS_BINGO_MASTER]);
   const activePlayerRef = useRef<ActiveFootballer | null>(null);
   const phaseRef = useRef<FootballBingoPhase>(phase);
   const playersRef = useRef<FootballBingoPlayer[]>(players);
@@ -54,7 +54,7 @@ export const FootballBingoTVView: React.FC = () => {
   // Pick next unused footballer randomly
   const pickNextFootballer = useCallback((): ActiveFootballer => {
     if (unusedPlayersRef.current.length === 0) {
-      unusedPlayersRef.current = [...FOOTBALL_BINGO_PLAYERS].sort(() => 0.5 - Math.random());
+      unusedPlayersRef.current = [...FOOTBALLERS_BINGO_MASTER].sort(() => 0.5 - Math.random());
     }
     const idx = Math.floor(Math.random() * unusedPlayersRef.current.length);
     const chosen = unusedPlayersRef.current.splice(idx, 1)[0];
@@ -77,10 +77,24 @@ export const FootballBingoTVView: React.FC = () => {
     setPlayers(prev => prev.filter(p => p.id !== playerId));
   };
 
+  // Terminate Room entirely
+  const handleTerminateRoom = useCallback(() => {
+    sound.playClick();
+    broadcastEvent({
+      action: 'ROOM_TERMINATED',
+    });
+    sessionStorage.removeItem('bingo_player_id');
+    sessionStorage.removeItem('bingo_room');
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+    }
+    navigate('/');
+  }, [broadcastEvent, navigate]);
+
   // Start match from Lobby
   const handleStartGame = useCallback(() => {
     sound.playWhistle();
-    unusedPlayersRef.current = [...FOOTBALL_BINGO_PLAYERS].sort(() => 0.5 - Math.random());
+    unusedPlayersRef.current = [...FOOTBALLERS_BINGO_MASTER].sort(() => 0.5 - Math.random());
     const firstFootballer = pickNextFootballer();
 
     setActivePlayer(firstFootballer);
@@ -106,7 +120,7 @@ export const FootballBingoTVView: React.FC = () => {
     const nextR = round + 1;
     setRound(nextR);
     setRoundWinner(null);
-    unusedPlayersRef.current = [...FOOTBALL_BINGO_PLAYERS].sort(() => 0.5 - Math.random());
+    unusedPlayersRef.current = [...FOOTBALLERS_BINGO_MASTER].sort(() => 0.5 - Math.random());
     const nextFootballer = pickNextFootballer();
 
     setActivePlayer(nextFootballer);
@@ -140,11 +154,11 @@ export const FootballBingoTVView: React.FC = () => {
     });
   };
 
-  // 2-Second Roulette Interval on TV during GAMEPLAY
+  // 5-Second Roulette Interval on TV during GAMEPLAY
   useEffect(() => {
     if (phase !== 'GAMEPLAY') return;
 
-    const DURATION = 2000;
+    const DURATION = 5000;
     const UPDATE_TICK = 50;
     let startTime = Date.now();
 
@@ -231,6 +245,17 @@ export const FootballBingoTVView: React.FC = () => {
       })
       .on('broadcast', { event: 'bingo_event' }, ({ payload }: { payload: FootballBingoEventPayload }) => {
         if (!payload) return;
+
+        // If room terminated by host
+        if (payload.action === 'ROOM_TERMINATED') {
+          sessionStorage.removeItem('bingo_player_id');
+          sessionStorage.removeItem('bingo_room');
+          if (channelRef.current) {
+            supabase.removeChannel(channelRef.current);
+          }
+          alert('تم إنهاء الجلسة بواسطة المضيف');
+          window.location.href = '/';
+        }
 
         // Player ready update in lobby
         if (payload.action === 'PLAYER_READY_UPDATE' && payload.playerId) {
@@ -319,7 +344,7 @@ export const FootballBingoTVView: React.FC = () => {
         roomCode={roomCode}
         phase={phase}
         onExit={handleResetToLobby}
-        onEndRoom={() => navigate('/')}
+        onEndRoom={handleTerminateRoom}
       />
 
       {/* Main Content Arena */}
@@ -373,7 +398,7 @@ export const FootballBingoTVView: React.FC = () => {
                 </h3>
                 <ol className="space-y-2 text-xs md:text-sm font-bold text-[#5C4033] leading-relaxed list-decimal list-inside">
                   <li>كل لاعب يستلم لوحة 16 مربع بصري خاصة فيه بالجوال.</li>
-                  <li>التلفزيون يكشف لاعب عشوائي كل ثانيتين مع عداد خاطف.</li>
+                  <li>التلفزيون يكشف لاعب عشوائي كل 5 ثوانٍ مع عداد خاطف.</li>
                   <li>طابق اللاعب مع المربع الصح (نادي، علم، مدرب، كأس، رقم، مركز).</li>
                   <li>لك ضغطة وحدة فقط لكل لاعب.. إذا أخطأت يتقفل دورك للّاعب التالي!</li>
                   <li>أول من يقفل خط (أفقي، عمودي، قطري) أو الـ 4 زوايا يكبس [بينقو!].</li>
@@ -427,17 +452,13 @@ export const FootballBingoTVView: React.FC = () => {
         {phase === 'GAMEPLAY' && activePlayer && (
           <div className="w-full max-w-4xl flex flex-col items-center justify-between h-full py-2">
             {/* Round Badge Header */}
-            <div className="flex items-center justify-between w-full px-4 mb-2">
+            <div className="flex items-center justify-center w-full px-4 mb-2">
               <span className="bg-[#8A9A5B] text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-4 py-1.5 rounded-xl font-black text-sm md:text-base">
                 الجولة {round} من {maxRounds}
               </span>
-
-              <span className="text-xs md:text-sm font-extrabold text-[#5C4033] bg-[#F7F4EC] border-2 border-[#2C2A29] px-3 py-1 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
-                الروشن والساحة العالمية
-              </span>
             </div>
 
-            {/* 2-Second Rapid Lightning Countdown Progress Bar */}
+            {/* 5-Second Rapid Lightning Countdown Progress Bar */}
             <div className="w-full max-w-xl bg-[#2C2A29]/15 h-3.5 rounded-full overflow-hidden border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] mb-4">
               <div
                 className="h-full bg-[#C68B59] transition-all duration-75 ease-linear"
@@ -445,10 +466,10 @@ export const FootballBingoTVView: React.FC = () => {
               />
             </div>
 
-            {/* Center Hero Card: Active Footballer */}
-            <div className="relative w-full max-w-md bg-[#F7F4EC] border-4 border-[#2C2A29] shadow-[8px_8px_0px_#2C2A29] rounded-3xl p-5 flex flex-col items-center text-center">
+            {/* Center Hero Card: Active Footballer (Strictly Blind: Photo + Name Only) */}
+            <div className="relative w-full max-w-md bg-[#F7F4EC] border-4 border-[#2C2A29] shadow-[8px_8px_0px_#2C2A29] rounded-3xl p-6 flex flex-col items-center text-center">
               {/* High-Res Player Portrait */}
-              <div className="relative w-48 h-48 md:w-56 md:h-56 rounded-2xl overflow-hidden border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] bg-[#E5E0D5] mb-4">
+              <div className="relative w-52 h-52 md:w-60 md:h-60 rounded-2xl overflow-hidden border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] bg-[#E5E0D5] mb-4">
                 <img
                   src={activePlayer.photo}
                   alt={activePlayer.name}
@@ -460,29 +481,9 @@ export const FootballBingoTVView: React.FC = () => {
               </div>
 
               {/* Player Name */}
-              <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29] tracking-tight mb-2">
+              <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29] tracking-tight">
                 {activePlayer.name}
               </h2>
-
-              {/* Nationalities & Primary Clubs Quick Ribbon */}
-              <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
-                {activePlayer.nationalities.map((nat, i) => (
-                  <span
-                    key={i}
-                    className="bg-[#E5E0D5] border-2 border-[#2C2A29] px-3 py-1 rounded-xl text-xs md:text-sm font-black text-[#2C2A29]"
-                  >
-                    {nat}
-                  </span>
-                ))}
-                {activePlayer.clubs.slice(0, 3).map((club, i) => (
-                  <span
-                    key={i}
-                    className="bg-[#F7F4EC] border-2 border-[#2C2A29] px-2.5 py-1 rounded-xl text-xs font-bold text-[#5C4033]"
-                  >
-                    {club}
-                  </span>
-                ))}
-              </div>
             </div>
 
             {/* Live Players Arena Trackers */}

@@ -18,7 +18,8 @@ export type FootballBingoAction =
   | 'BINGO_CLAIM'
   | 'NEXT_ROUND'
   | 'RESET_LOBBY'
-  | 'PLAYER_READY_UPDATE';
+  | 'PLAYER_READY_UPDATE'
+  | 'ROOM_TERMINATED';
 
 export interface FootballBingoEventPayload {
   action: FootballBingoAction;

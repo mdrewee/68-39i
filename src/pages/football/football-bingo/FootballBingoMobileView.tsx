@@ -33,7 +33,7 @@ export const FootballBingoMobileView: React.FC = () => {
   });
 
   const [playerName, setPlayerName] = useState<string>(() => {
-    return sessionStorage.getItem('player_name') || localStorage.getItem('player_name') || 'كابتن';
+    return sessionStorage.getItem('player_name') || localStorage.getItem('player_name') || 'لاعب';
   });
 
   // Game state
@@ -46,7 +46,7 @@ export const FootballBingoMobileView: React.FC = () => {
   // 16-Tile Bingo Board
   const [board, setBoard] = useState<PlayerBingoTile[]>(() => generatePlayerBingoBoard());
 
-  // Single-attempt lockout per 2-second cycle
+  // Single-attempt lockout per 5-second cycle
   const [hasAttemptedCurrentPlayer, setHasAttemptedCurrentPlayer] = useState<boolean>(false);
   const [shakingTileIndex, setShakingTileIndex] = useState<number | null>(null);
 
@@ -54,7 +54,7 @@ export const FootballBingoMobileView: React.FC = () => {
   const [isBingoAvailable, setIsBingoAvailable] = useState<boolean>(false);
   const [roundWinner, setRoundWinner] = useState<{ id: string; name: string; round: number } | null>(null);
 
-  // 2s Progress bar on mobile
+  // 5s Progress bar on mobile
   const [progressPercent, setProgressPercent] = useState<number>(100);
 
   // Channel ref
@@ -98,7 +98,7 @@ export const FootballBingoMobileView: React.FC = () => {
     const targetTile = board[index];
     if (targetTile.isClaimed) return;
 
-    // Immediately lock out further taps for this 2-second player cycle
+    // Immediately lock out further taps for this 5-second player cycle
     setHasAttemptedCurrentPlayer(true);
 
     const isMatch = evaluateTileMatch(currentPlayer, targetTile.definition);
@@ -167,12 +167,12 @@ export const FootballBingoMobileView: React.FC = () => {
     });
   };
 
-  // Reset 2-second progress bar smoothly
+  // Reset 5-second progress bar smoothly
   useEffect(() => {
     if (phase !== 'GAMEPLAY') return;
 
     setProgressPercent(100);
-    const DURATION = 2000;
+    const DURATION = 5000;
     const TICK = 50;
     const start = Date.now();
 
@@ -219,6 +219,18 @@ export const FootballBingoMobileView: React.FC = () => {
       })
       .on('broadcast', { event: 'bingo_event' }, ({ payload }: { payload: FootballBingoEventPayload }) => {
         if (!payload) return;
+
+        // Room Terminated by Host
+        if (payload.action === 'ROOM_TERMINATED') {
+          sessionStorage.removeItem('bingo_player_id');
+          sessionStorage.removeItem('bingo_room');
+          if (channelRef.current) {
+            supabase.removeChannel(channelRef.current);
+          }
+          alert('تم إنهاء الجلسة بواسطة المضيف');
+          window.location.href = '/';
+          return;
+        }
 
         // Game Started by TV
         if (payload.action === 'GAME_START') {
@@ -306,7 +318,14 @@ export const FootballBingoMobileView: React.FC = () => {
       <FootballBingoTopBar
         roomCode={roomCode}
         phase={phase}
-        onEndRoom={() => (window.location.href = '/')}
+        onEndRoom={() => {
+          sessionStorage.removeItem('bingo_player_id');
+          sessionStorage.removeItem('bingo_room');
+          if (channelRef.current) {
+            supabase.removeChannel(channelRef.current);
+          }
+          window.location.href = '/';
+        }}
       />
 
       <main className="flex-1 flex flex-col items-center justify-between p-3 max-w-md mx-auto w-full">
@@ -341,7 +360,7 @@ export const FootballBingoMobileView: React.FC = () => {
             {/* Quick Mobile Tip */}
             <div className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-4 text-xs font-bold text-[#5C4033] leading-relaxed">
               <span className="font-black text-[#2C2A29] block mb-1">تعليمات الجوال:</span>
-              كل ثانيتين يظهر لاعب على الشاشة، اضغط المربع اللي ينطبق عليه. لك محاولة واحدة فقط لكل لاعب.. انتبه من التخمين العشوائي!
+              كل 5 ثوانٍ يظهر لاعب على الشاشة، اضغط المربع اللي ينطبق عليه. لك محاولة واحدة فقط لكل لاعب.. انتبه من التخمين العشوائي!
             </div>
           </div>
         )}
@@ -351,7 +370,7 @@ export const FootballBingoMobileView: React.FC = () => {
         {/* ============================================================== */}
         {phase === 'GAMEPLAY' && currentPlayer && (
           <div className="w-full flex-1 flex flex-col items-center justify-between">
-            {/* Top Header: Active Player Mini Preview & Progress Bar */}
+            {/* Top Header: Active Player Mini Preview & Progress Bar (Blind: Photo + Name Only) */}
             <div className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl p-2.5 mb-2">
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 {/* Player Mini Avatar & Name */}
@@ -370,9 +389,6 @@ export const FootballBingoMobileView: React.FC = () => {
                     <span className="font-black text-sm md:text-base text-[#2C2A29] block truncate">
                       {currentPlayer.name}
                     </span>
-                    <span className="text-[10px] font-bold text-[#5C4033] block truncate">
-                      {currentPlayer.nationalities.join(' • ')}
-                    </span>
                   </div>
                 </div>
 
@@ -388,7 +404,7 @@ export const FootballBingoMobileView: React.FC = () => {
                 </span>
               </div>
 
-              {/* 2-Second Rapid Countdown Bar */}
+              {/* 5-Second Rapid Countdown Bar */}
               <div className="w-full bg-[#2C2A29]/15 h-2 rounded-full overflow-hidden border border-[#2C2A29]">
                 <div
                   className="h-full bg-[#C68B59] transition-all duration-75 ease-linear"
