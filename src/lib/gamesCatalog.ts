@@ -9,13 +9,13 @@ export interface GameModeInfo {
   maxPlayers: number;
   roundDurationMinutes: number;
   tag: string;
-  category: 'letters' | 'geography' | 'words' | 'ai' | 'eshrah';
+  category: 'letters' | 'geography' | 'words' | 'ai' | 'eshrah' | 'football';
   icon: string;
   badgeColor: 'olive' | 'ochre' | 'sand';
 }
 
 export interface GameCategory {
-  id: 'letters' | 'geography' | 'words' | 'ai' | 'eshrah';
+  id: 'letters' | 'geography' | 'words' | 'ai' | 'eshrah' | 'football';
   title: string;
   englishTitle: string;
   description: string;
@@ -342,7 +342,31 @@ export const GAME_CATEGORIES: GameCategory[] = [
       },
     ],
   },
+
+  {
+    id: 'football',
+    title: 'فئة كرة القدم',
+    englishTitle: 'Football Suite',
+    description: 'تحديات كروية سريعة وبينقو النجوم والأندية العالمية على الشاشة والجوال',
+    tag: 'كورة وبينقو',
+    modes: [
+      {
+        id: 'football-bingo',
+        title: 'بينقو الكروي',
+        subtitle: 'لوحة 16 مربع بصري وروليت كل ثانيتين',
+        description: 'لوحة بينقو 16 مربع بصري.. كل ثانيتين ينزل لاعب عشوائي على الشاشة، اربطه بالمربع الصح وأول من يقفل خط يصرخ بينقو!',
+        minPlayers: 1,
+        maxPlayers: 16,
+        roundDurationMinutes: 5,
+        tag: 'جديد',
+        category: 'football',
+        icon: 'Grid',
+        badgeColor: 'olive',
+      },
+    ],
+  },
 ];
+
 
 // Flattened list of all modes for easy lookup
 export const ALL_GAME_MODES: GameModeInfo[] = GAME_CATEGORIES.flatMap((c) => c.modes);
