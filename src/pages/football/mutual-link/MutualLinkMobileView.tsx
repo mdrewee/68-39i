@@ -428,14 +428,26 @@ export const MutualLinkMobileView: FC = () => {
                 </div>
               </div>
             ) : (
-              <div className="space-y-3">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSubmitGuess();
+                }}
+                className="space-y-3"
+              >
                 {/* Search Bar */}
                 <div className="relative">
                   <input
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="ابحث بالاسم: مثلاً بنزيما، سالم، إيتو..."
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSubmitGuess();
+                      }
+                    }}
+                    placeholder="ابحث أو اكتب الاسم واضغط إرسال..."
                     className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl px-4 py-3 font-black text-sm text-[#2C2A29] focus:outline-none focus:bg-white"
                   />
                   {query && (
@@ -466,11 +478,10 @@ export const MutualLinkMobileView: FC = () => {
                   </div>
                 )}
 
-                {/* Submit Guess Button */}
+                {/* Submit Guess Button [إرسال] */}
                 <button
-                  type="button"
+                  type="submit"
                   disabled={!query.trim()}
-                  onClick={() => handleSubmitGuess()}
                   className={`w-full py-3.5 rounded-xl font-black text-base border-2 border-[#2C2A29] transition-all flex items-center justify-center gap-2 ${
                     query.trim()
                       ? 'bg-[#8A9A5B] hover:bg-[#78884E] text-[#F7F4EC] shadow-[3px_3px_0px_#2C2A29] active:translate-x-[1px] active:translate-y-[1px] cursor-pointer'
@@ -478,9 +489,9 @@ export const MutualLinkMobileView: FC = () => {
                   }`}
                 >
                   <Send size={16} />
-                  <span>إرسال الإجابة</span>
+                  <span>إرسال</span>
                 </button>
-              </div>
+              </form>
             )}
           </div>
         )}

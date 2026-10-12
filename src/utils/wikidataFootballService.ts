@@ -124,10 +124,33 @@ export const generateLiveChallengeAsync = async (
   // Shuffle clubs for non-repeating randomized matchups
   const clubs = [...WIKIDATA_CLUBS].sort(() => 0.5 - Math.random());
 
-  // Prioritize classic / high-likelihood pairings first
+  // Prioritize classic, high-likelihood, and Cross-League Saudi x European pairings
   const highProbabilityPairs: [string, string][] = [
+    // Cross-League Saudi x European Powerhouses (Karim Benzema, Cristiano Ronaldo, Riyad Mahrez, Saud Abdulhamid, Aubameyang, Henderson/Wijnaldum, etc.)
+    ['al_ittihad', 'real_madrid'],
+    ['al_hilal', 'roma'],
+    ['al_nassr', 'man_united'],
+    ['al_ahli', 'man_city'],
+    ['al_ettifaq', 'liverpool'],
+    ['al_qadsiah', 'arsenal'],
+    ['al_qadsiah', 'dortmund'],
+    ['al_nassr', 'real_madrid'],
+    ['al_hilal', 'chelsea'],
+    ['al_ahli', 'barcelona'],
+    ['al_shabab', 'barcelona'],
+    ['al_ittihad', 'chelsea'],
+    ['al_nassr', 'bayern'],
+    ['al_hilal', 'psg'],
+
+    // Intra-Saudi Classics
     ['al_ittihad', 'al_nassr'],
     ['al_hilal', 'al_ittihad'],
+    ['al_hilal', 'al_nassr'],
+    ['al_ahli', 'al_ittihad'],
+    ['al_hilal', 'al_shabab'],
+    ['al_ittihad', 'al_qadsiah'],
+
+    // European Classics
     ['real_madrid', 'barcelona'],
     ['chelsea', 'arsenal'],
     ['man_united', 'real_madrid'],
@@ -135,9 +158,6 @@ export const generateLiveChallengeAsync = async (
     ['juventus', 'milan'],
     ['inter', 'milan'],
     ['liverpool', 'man_city'],
-    ['al_hilal', 'al_shabab'],
-    ['al_ahli', 'al_ittihad'],
-    ['al_hilal', 'al_nassr'],
     ['psg', 'barcelona'],
     ['bayern', 'dortmund'],
     ['chelsea', 'real_madrid'],
@@ -146,7 +166,6 @@ export const generateLiveChallengeAsync = async (
     ['arsenal', 'man_city'],
     ['tottenham', 'chelsea'],
     ['newcastle', 'liverpool'],
-    ['al_ittihad', 'al_qadsiah'],
   ];
 
   // Try high probability pairs if unused

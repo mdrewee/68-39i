@@ -117,6 +117,11 @@ export function App() {
         <Route path="/room/:code/football/mutual-link-play" element={<PlayerMobileView />} />
         <Route path="/room/:code/football/mutual-link-tv" element={<TVScreenView />} />
 
+        {/* Football Suite - Draft 5 (كوّن فريقك) */}
+        <Route path="/room/:code/football/draft-5" element={<PlayerMobileView />} />
+        <Route path="/room/:code/football/draft-5-play" element={<PlayerMobileView />} />
+        <Route path="/room/:code/football/draft-5-tv" element={<TVScreenView />} />
+
         {/* Player Join & Mobile Controller View */}
         <Route path="/room/:code/join" element={<MobileJoinPage />} />
         <Route path="/room/:code/play" element={<PlayerMobileView />} />

@@ -23,6 +23,7 @@ import { OneWordMobileView } from './eshrah/OneWord/OneWordMobileView';
 import { MoveThePuppetMobileView } from './eshrah/MoveThePuppet/MoveThePuppetMobileView';
 import { FootballBingoMobileView } from './football/football-bingo/FootballBingoMobileView';
 import { MutualLinkMobileView } from './football/mutual-link/MutualLinkMobileView';
+import { DraftMobileView } from './football/draft-5/DraftMobileView';
 import { MobileTopBar } from '../components/MobileTopBar';
 import { getOrCreatePlayerId, getOrCreatePlayerName, clearPlayerSession } from '../utils/playerSession';
 import { useSafeCountdown } from '../hooks/useSafeCountdown';
@@ -449,6 +450,12 @@ export const PlayerMobileView: React.FC = () => {
     path.includes('mutual-link')
   ) {
     return <MutualLinkMobileView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'draft-5' ||
+    path.includes('draft-5')
+  ) {
+    return <DraftMobileView />;
   }
 
   // Fallbacks based on active states if selectedGameId is not explicitly set
