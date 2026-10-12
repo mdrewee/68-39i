@@ -5,12 +5,12 @@ import { RealtimeChannel } from '@supabase/supabase-js';
 import {
   MutualLinkPhase,
   MutualLinkEventPayload,
+  MutualLinkChallenge,
 } from './types';
-import { MutualLinkChallenge } from '../../../utils/mutualLinkEngine';
-import { PLAYERS_DB, CLUBS_DB, normalizeArabicFootball } from '../../../utils/footballHistoryEngine';
+import { normalizeArabicFootball } from '../../../utils/wikidataFootballService';
 import { SafeEntityBadge } from './components/SafeEntityBadge';
 import { sound } from '../../../lib/audio';
-import { Trophy, Send } from 'lucide-react';
+import { Trophy, Send, CheckCircle2 } from 'lucide-react';
 
 export const MutualLinkMobileView: FC = () => {
   const { code: rawCode } = useParams<{ code: string }>();
@@ -27,6 +27,7 @@ export const MutualLinkMobileView: FC = () => {
   const [hasJoined, setHasJoined] = useState<boolean>(() => {
     return !!sessionStorage.getItem('mutual_player_name');
   });
+  const [isReady, setIsReady] = useState<boolean>(false);
 
   // Game Realtime State (Strictly 10 Rounds)
   const [phase, setPhase] = useState<MutualLinkPhase>('LOBBY');
@@ -57,30 +58,18 @@ export const MutualLinkMobileView: FC = () => {
   useEffect(() => { playerNameRef.current = playerName; }, [playerName]);
   useEffect(() => { hasJoinedRef.current = hasJoined; }, [hasJoined]);
 
-  // Autocomplete suggestion logic based on challenge type
+  // Autocomplete suggestion logic based on challenge valid display names
   useEffect(() => {
     const trimmed = query.trim();
-    if (!trimmed || isLockedOut) {
+    if (!trimmed || isLockedOut || !currentChallenge) {
       setSuggestions([]);
       return;
     }
 
     const norm = normalizeArabicFootball(trimmed);
-    if (currentChallenge?.type === 'CLUB_TO_CLUB') {
-      // Suggest player names from in-memory PLAYERS_DB
-      const hits = PLAYERS_DB.filter(p =>
-        normalizeArabicFootball(p.name).includes(norm) ||
-        p.aliases.some(a => normalizeArabicFootball(a).includes(norm))
-      ).slice(0, 6);
-      setSuggestions(hits.map(p => p.name));
-    } else {
-      // Suggest club names strictly (Clubs Only Rule - No National Teams)
-      const hits = CLUBS_DB.filter(c =>
-        normalizeArabicFootball(c.name).includes(norm) ||
-        c.aliases.some(a => normalizeArabicFootball(a).includes(norm))
-      ).slice(0, 6);
-      setSuggestions(hits.map(c => c.name));
-    }
+    const pool = currentChallenge.validDisplayNames || [];
+    const hits = pool.filter((name) => normalizeArabicFootball(name).includes(norm)).slice(0, 6);
+    setSuggestions(hits);
   }, [query, currentChallenge, isLockedOut]);
 
   // Broadcast event helper
@@ -325,16 +314,41 @@ export const MutualLinkMobileView: FC = () => {
             STATE: LOBBY
             ======================================================= */}
         {phase === 'LOBBY' && (
-          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-4 py-8">
+          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-6 py-8">
             <div className="w-16 h-16 bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl flex items-center justify-center text-2xl font-black text-[#2C2A29]">
               ؟
             </div>
             <div className="space-y-1">
-              <h2 className="text-2xl font-black text-[#2C2A29]">أنت جاهز يا {playerName}!</h2>
+              <h2 className="text-2xl font-black text-[#2C2A29]">أهلاً بك يا {playerName}!</h2>
               <p className="text-xs font-bold text-[#5C4033]">
-                تابع شاشة العرض الرئيسية لبدء الجولة الأولى ⚡
+                اضغط على زر الجاهزية واستعد للجولة الأولى ⚡
               </p>
             </div>
+
+            {/* Large Olivine Green Ready Button */}
+            <button
+              type="button"
+              onClick={() => {
+                sound.playClick();
+                const nextReady = !isReady;
+                setIsReady(nextReady);
+                broadcastEvent({
+                  action: 'PLAYER_READY',
+                  playerId: playerIdRef.current,
+                  playerName: playerNameRef.current,
+                  isReady: nextReady,
+                });
+              }}
+              className={`w-full max-w-xs py-4 px-6 rounded-2xl font-black text-lg border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                isReady
+                  ? 'bg-[#8A9A5B] text-[#F7F4EC]'
+                  : 'bg-[#F7F4EC] text-[#2C2A29] hover:bg-white'
+              }`}
+            >
+              <CheckCircle2 size={22} className={isReady ? 'text-[#F7F4EC]' : 'text-[#8A9A5B]'} />
+              <span>{isReady ? 'أنا جاهز ✓' : 'أنا جاهز'}</span>
+            </button>
+
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-4 py-2 rounded-xl text-xs font-mono font-bold text-[#5C4033]">
               غرفة: {roomCode}
             </div>
@@ -349,9 +363,7 @@ export const MutualLinkMobileView: FC = () => {
             {/* Visual Helper of Entity A and B */}
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl p-3">
               <div className="text-center text-xs font-black text-[#5C4033] mb-2">
-                {currentChallenge.type === 'CLUB_TO_CLUB'
-                  ? 'من هو اللاعب الذي لعب للناديين؟ ⚽'
-                  : 'ما هو النادي المشترك بين النجمين؟ 🛡️'}
+                من هو اللاعب الذي لعب للناديين؟ ⚽
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <div className="flex flex-col items-center text-center">
@@ -423,11 +435,7 @@ export const MutualLinkMobileView: FC = () => {
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder={
-                      currentChallenge.type === 'CLUB_TO_CLUB'
-                        ? 'ابحث بالاسم: مثلاً بنزيما، سالم...'
-                        : 'ابحث عن النادي المشترك: مثلاً الهلال، الريال...'
-                    }
+                    placeholder="ابحث بالاسم: مثلاً بنزيما، سالم، إيتو..."
                     className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl px-4 py-3 font-black text-sm text-[#2C2A29] focus:outline-none focus:bg-white"
                   />
                   {query && (

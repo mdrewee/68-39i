@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { Play, Users, Trophy, Sparkles, RotateCcw, Link as LinkIcon, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Play, Users, Trophy, RotateCcw, Link as LinkIcon, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { MutualLinkTopBar } from './components/MutualLinkTopBar';
@@ -10,13 +10,13 @@ import {
   MutualLinkPhase,
   MutualLinkPlayer,
   MutualLinkEventPayload,
+  MutualLinkChallenge,
 } from './types';
 import {
-  MutualLinkChallenge,
-  generateMutualLinkChallenges,
-  enrichChallengeFromDb,
-} from '../../../utils/mutualLinkEngine';
-import { normalizeArabicFootball, validateMutualAnswer } from '../../../utils/footballHistoryEngine';
+  generateLiveChallengeAsync,
+  validateLiveAnswer,
+  normalizeArabicFootball,
+} from '../../../utils/wikidataFootballService';
 import { sound } from '../../../lib/audio';
 
 export const MutualLinkTVView: React.FC = () => {
@@ -28,7 +28,6 @@ export const MutualLinkTVView: React.FC = () => {
   const maxRounds = 10;
   const [phase, setPhase] = useState<MutualLinkPhase>('LOBBY');
   const [round, setRound] = useState<number>(1);
-  const [challenges, setChallenges] = useState<MutualLinkChallenge[]>([]);
   const [currentChallenge, setCurrentChallenge] = useState<MutualLinkChallenge | null>(null);
 
   const [players, setPlayers] = useState<MutualLinkPlayer[]>([]);
@@ -53,10 +52,13 @@ export const MutualLinkTVView: React.FC = () => {
   // Auto-advance countdown after reveal
   const [advanceCountdown, setAdvanceCountdown] = useState<number | null>(null);
 
+  // Background Pre-fetching Refs
+  const nextChallengeRef = useRef<MutualLinkChallenge | null>(null);
+  const usedPairsRef = useRef<Set<string>>(new Set());
+
   // References for live timer & state
   const phaseRef = useRef<MutualLinkPhase>(phase);
   const roundRef = useRef<number>(round);
-  const challengesRef = useRef<MutualLinkChallenge[]>([]);
   const currentChallengeRef = useRef<MutualLinkChallenge | null>(null);
   const playersRef = useRef<MutualLinkPlayer[]>(players);
   const scoresRef = useRef<Record<string, number>>(scores);
@@ -64,7 +66,6 @@ export const MutualLinkTVView: React.FC = () => {
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { roundRef.current = round; }, [round]);
-  useEffect(() => { challengesRef.current = challenges; }, [challenges]);
   useEffect(() => { currentChallengeRef.current = currentChallenge; }, [currentChallenge]);
   useEffect(() => { playersRef.current = players; }, [players]);
   useEffect(() => { scoresRef.current = scores; }, [scores]);
@@ -79,6 +80,18 @@ export const MutualLinkTVView: React.FC = () => {
     });
   }, []);
 
+  // 1. In LOBBY: Pre-fetch Round 1 before game starts (Zero Wait Time)
+  useEffect(() => {
+    if (phase === 'LOBBY' && !nextChallengeRef.current) {
+      generateLiveChallengeAsync(usedPairsRef.current).then((challenge) => {
+        if (challenge) {
+          nextChallengeRef.current = challenge;
+          console.log('[MutualLinkTV] Pre-fetched Round 1 from Wikidata:', challenge.clubA.name, 'x', challenge.clubB.name);
+        }
+      });
+    }
+  }, [phase]);
+
   // Host Kick Player from Lobby
   const handleKickPlayer = useCallback((targetPlayerId: string) => {
     sound.playClick();
@@ -86,7 +99,7 @@ export const MutualLinkTVView: React.FC = () => {
       action: 'KICK_PLAYER',
       targetPlayerId,
     });
-    setPlayers(prev => prev.filter(p => p.id !== targetPlayerId));
+    setPlayers((prev) => prev.filter((p) => p.id !== targetPlayerId));
   }, [broadcastEvent]);
 
   // Terminate Room entirely
@@ -102,11 +115,21 @@ export const MutualLinkTVView: React.FC = () => {
   }, [broadcastEvent, navigate]);
 
   // Start match from Lobby (10 rounds)
-  const handleStartGame = useCallback(() => {
+  const handleStartGame = useCallback(async () => {
     sound.playWhistle();
-    const generated = generateMutualLinkChallenges(maxRounds);
-    setChallenges(generated);
-    setCurrentChallenge(generated[0]);
+
+    let initialChallenge = nextChallengeRef.current;
+    if (!initialChallenge) {
+      initialChallenge = await generateLiveChallengeAsync(usedPairsRef.current);
+    }
+    if (!initialChallenge) {
+      console.error('[MutualLinkTV] Failed to generate challenge');
+      return;
+    }
+
+    nextChallengeRef.current = null; // Clear active slot
+
+    setCurrentChallenge(initialChallenge);
     setRound(1);
     setPhase('GAMEPLAY');
     setRoundWinner(null);
@@ -116,7 +139,7 @@ export const MutualLinkTVView: React.FC = () => {
 
     // Reset scores for fresh game
     const resetScores: Record<string, number> = {};
-    playersRef.current.forEach(p => { resetScores[p.id] = 0; });
+    playersRef.current.forEach((p) => { resetScores[p.id] = 0; });
     setScores(resetScores);
 
     broadcastEvent({
@@ -124,13 +147,21 @@ export const MutualLinkTVView: React.FC = () => {
       phase: 'GAMEPLAY',
       round: 1,
       maxRounds,
-      challenge: generated[0],
+      challenge: initialChallenge,
       scores: resetScores,
+    });
+
+    // CRITICAL: Immediately pre-fetch Round 2 in background while Round 1 is actively being played!
+    generateLiveChallengeAsync(usedPairsRef.current).then((next) => {
+      if (next) {
+        nextChallengeRef.current = next;
+        console.log('[MutualLinkTV] Background pre-fetched Round 2:', next.clubA.name, 'x', next.clubB.name);
+      }
     });
   }, [broadcastEvent, maxRounds]);
 
   // Advance to Next Round or Final Podium
-  const handleNextRound = useCallback(() => {
+  const handleNextRound = useCallback(async () => {
     sound.playClick();
     if (roundRef.current >= maxRounds) {
       setPhase('MATCH_OVER');
@@ -143,7 +174,13 @@ export const MutualLinkTVView: React.FC = () => {
     }
 
     const nextR = roundRef.current + 1;
-    const nextChallenge = challengesRef.current[nextR - 1];
+    let nextChallenge = nextChallengeRef.current;
+    if (!nextChallenge) {
+      nextChallenge = await generateLiveChallengeAsync(usedPairsRef.current);
+    }
+    if (!nextChallenge) return;
+
+    nextChallengeRef.current = null; // Clear active slot
 
     setRound(nextR);
     setCurrentChallenge(nextChallenge);
@@ -162,9 +199,19 @@ export const MutualLinkTVView: React.FC = () => {
       challenge: nextChallenge,
       scores: scoresRef.current,
     });
+
+    // CRITICAL: Immediately trigger background pre-fetch for next round (N + 1)
+    if (nextR < maxRounds) {
+      generateLiveChallengeAsync(usedPairsRef.current).then((next) => {
+        if (next) {
+          nextChallengeRef.current = next;
+          console.log('[MutualLinkTV] Background pre-fetched Round', nextR + 1, ':', next.clubA.name, 'x', next.clubB.name);
+        }
+      });
+    }
   }, [broadcastEvent, maxRounds]);
 
-  // Process a guess from a contestant (Exhaustive Set Matching)
+  // Process a guess from a contestant (Immediate Dynamic Answer Evaluation via Live Wikidata)
   const handleProcessGuess = useCallback((playerId: string, playerName: string, guessText: string) => {
     if (phaseRef.current !== 'GAMEPLAY') return;
     const challenge = currentChallengeRef.current;
@@ -173,40 +220,36 @@ export const MutualLinkTVView: React.FC = () => {
     const normGuess = normalizeArabicFootball(guessText);
     if (!normGuess) return;
 
-    // Check if guess matches ANY valid player/entity in the exhaustive set
+    // Check if guess matches ANY valid player returned from the live Wikidata query
     const isCorrect =
-      validateMutualAnswer(guessText, challenge.validAnswers) ||
-      validateMutualAnswer(guessText, challenge.validDisplayNames) ||
-      challenge.validAnswers.includes(normGuess) ||
-      challenge.validDisplayNames.some(d => normalizeArabicFootball(d) === normGuess);
+      validateLiveAnswer(guessText, challenge.validAnswerStrings) ||
+      challenge.validPlayers.some((p) => {
+        const ar = normalizeArabicFootball(p.nameAr);
+        const en = normalizeArabicFootball(p.nameEn);
+        return ar === normGuess || en === normGuess || ar.includes(normGuess) || normGuess.includes(ar);
+      });
 
     if (isCorrect) {
       // Find the specific matched display name
-      let matchedOfficialName = guessText;
-      let matchedPhoto = challenge.revealItem.image;
-
-      if (challenge.type === 'CLUB_TO_CLUB' && challenge.matchingPlayers) {
-        const foundPlayer = challenge.matchingPlayers.find(p =>
-          normalizeArabicFootball(p.name) === normGuess ||
-          p.aliases.some(a => normalizeArabicFootball(a) === normGuess) ||
-          validateMutualAnswer(guessText, [p.name, ...p.aliases])
+      const matchedPlayer = challenge.validPlayers.find((p) => {
+        const ar = normalizeArabicFootball(p.nameAr);
+        const en = normalizeArabicFootball(p.nameEn);
+        return (
+          ar === normGuess ||
+          en === normGuess ||
+          ar.includes(normGuess) ||
+          normGuess.includes(ar) ||
+          validateLiveAnswer(guessText, [p.nameAr, p.nameEn])
         );
-        if (foundPlayer) {
-          matchedOfficialName = foundPlayer.name;
-          if (foundPlayer.photo) matchedPhoto = foundPlayer.photo;
-        }
-      } else {
-        const foundEntity = challenge.validDisplayNames.find(
-          d => normalizeArabicFootball(d) === normGuess ||
-               validateMutualAnswer(guessText, [d])
-        );
-        if (foundEntity) matchedOfficialName = foundEntity;
-      }
+      });
 
-      // Collect all other valid options for display
+      const matchedOfficialName = matchedPlayer ? matchedPlayer.nameAr || matchedPlayer.nameEn : guessText;
+      const matchedPhoto = matchedPlayer?.photoUrl || challenge.revealItem.image;
+
+      // Collect all other valid options discovered by Wikidata for display
       const normMatched = normalizeArabicFootball(matchedOfficialName);
       const otherOptions = challenge.validDisplayNames.filter(
-        name => normalizeArabicFootball(name) !== normMatched && normalizeArabicFootball(name) !== normGuess
+        (name) => normalizeArabicFootball(name) !== normMatched && normalizeArabicFootball(name) !== normGuess
       );
 
       // Instant round freeze & win
@@ -221,15 +264,15 @@ export const MutualLinkTVView: React.FC = () => {
       });
       setIsTimeout(false);
 
-      // Update revealItem dynamically if the player guessed a valid player with photo
-      setCurrentChallenge(prev => {
+      // Update revealItem dynamically to showcase the winner's guess
+      setCurrentChallenge((prev) => {
         if (!prev) return prev;
         return {
           ...prev,
           revealItem: {
             name: matchedOfficialName,
             image: matchedPhoto,
-            subtitle: prev.revealItem.subtitle,
+            subtitle: `لعب مع ${prev.clubA.name} و ${prev.clubB.name}`,
           },
         };
       });
@@ -242,7 +285,7 @@ export const MutualLinkTVView: React.FC = () => {
       setScores(newScores);
 
       // Update player scores list
-      setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, score: (p.score || 0) + 1 } : p));
+      setPlayers((prev) => prev.map((p) => (p.id === playerId ? { ...p, score: (p.score || 0) + 1 } : p)));
 
       broadcastEvent({
         action: 'ROUND_WINNER',
@@ -306,7 +349,7 @@ export const MutualLinkTVView: React.FC = () => {
 
         const challenge = currentChallengeRef.current;
         const others = challenge
-          ? challenge.validDisplayNames.filter(d => d !== challenge.revealItem.name)
+          ? challenge.validDisplayNames.filter((d) => d !== challenge.revealItem.name)
           : [];
         setTimeoutOtherOptions(others);
 
@@ -342,7 +385,7 @@ export const MutualLinkTVView: React.FC = () => {
     const channelId = `mutuallink:${roomCode}`;
 
     const existingChannel = supabase.getChannels().find(
-      ch => ch.topic === `realtime:${channelId}` || ch.topic === channelId
+      (ch) => ch.topic === `realtime:${channelId}` || ch.topic === channelId
     );
     if (existingChannel) {
       supabase.removeChannel(existingChannel);
@@ -361,12 +404,13 @@ export const MutualLinkTVView: React.FC = () => {
         const rawEntries = Object.values(state).flat() as any[];
         const map = new Map<string, MutualLinkPlayer>();
 
-        rawEntries.forEach(entry => {
+        rawEntries.forEach((entry) => {
           if (entry.id && entry.id !== 'host_tv' && !map.has(entry.id)) {
             map.set(entry.id, {
               id: entry.id,
-              name: entry.name || 'لاعب',
+              name: entry.name || '',
               score: scoresRef.current[entry.id] || 0,
+              isReady: entry.isReady || false,
             });
           }
         });
@@ -378,13 +422,17 @@ export const MutualLinkTVView: React.FC = () => {
         sound.playPlayerJoin();
         newPresences.forEach((entry: any) => {
           if (entry.id && entry.id !== 'host_tv') {
-            setPlayers(prev => {
-              if (prev.some(p => p.id === entry.id)) return prev;
-              return [...prev, {
-                id: entry.id,
-                name: entry.name || 'لاعب',
-                score: scoresRef.current[entry.id] || 0,
-              }];
+            setPlayers((prev) => {
+              if (prev.some((p) => p.id === entry.id)) return prev;
+              return [
+                ...prev,
+                {
+                  id: entry.id,
+                  name: entry.name || '',
+                  score: scoresRef.current[entry.id] || 0,
+                  isReady: false,
+                },
+              ];
             });
           }
         });
@@ -392,7 +440,7 @@ export const MutualLinkTVView: React.FC = () => {
       .on('presence', { event: 'leave' }, ({ leftPresences }) => {
         leftPresences.forEach((entry: any) => {
           if (entry.id) {
-            setPlayers(prev => prev.filter(p => p.id !== entry.id));
+            setPlayers((prev) => prev.filter((p) => p.id !== entry.id));
           }
         });
       })
@@ -401,7 +449,11 @@ export const MutualLinkTVView: React.FC = () => {
         const ev = payload as MutualLinkEventPayload;
 
         if (ev.action === 'SUBMIT_GUESS' && ev.playerId && ev.guessText) {
-          handleProcessGuess(ev.playerId, ev.playerName || 'لاعب', ev.guessText);
+          handleProcessGuess(ev.playerId, ev.playerName || '', ev.guessText);
+        } else if (ev.action === 'PLAYER_READY' && ev.playerId) {
+          setPlayers((prev) =>
+            prev.map((p) => (p.id === ev.playerId ? { ...p, isReady: Boolean(ev.isReady) } : p))
+          );
         } else if (ev.action === 'RESET_LOBBY') {
           setPhase('LOBBY');
           setRound(1);
@@ -483,47 +535,45 @@ export const MutualLinkTVView: React.FC = () => {
             <div className="text-center space-y-2">
               <div className="inline-flex items-center gap-2 bg-[#8A9A5B] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-4 py-1.5 rounded-xl font-black text-sm">
                 <LinkIcon size={16} />
-                <span>حلقة الوصل الكروية</span>
+                <span>حلقة الوصل الكروية ⚡</span>
               </div>
-              <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29] tracking-tight">
-                اكتشف الرابط السري بين الأساطير والأندية!
-              </h2>
-              <p className="text-[#5C4033] font-bold text-base md:text-lg">
-                امسح الرمز بالجوال لتنضم للتحدي المباشر السريع ⚡
+              <h1 className="text-4xl md:text-5xl font-black text-[#2C2A29] tracking-tight">
+                من هو اللاعب المشترك بين الناديين؟
+              </h1>
+              <p className="text-sm md:text-base font-bold text-[#5C4033]">
+                بيانات حية مباشرة من مستودع ويكيداتا العالمي عبر التاريخ!
               </p>
             </div>
 
-            {/* QR Card & Info */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
-              {/* QR Code Container */}
-              <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 flex flex-col items-center justify-center text-center">
-                <div className="bg-white p-4 rounded-xl border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] mb-4">
+            {/* Brutalist QR & Roster Card */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[8px_8px_0px_#2C2A29] rounded-3xl p-6 md:p-8">
+              {/* QR Code Section */}
+              <div className="flex flex-col items-center justify-center text-center p-4 border-2 border-dashed border-[#2C2A29] rounded-2xl bg-white space-y-4">
+                <div className="bg-[#F7F4EC] p-3 rounded-2xl border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29]">
                   <QRCodeSVG
                     value={joinUrl}
-                    size={190}
+                    size={200}
                     level="H"
                     includeMargin={false}
+                    className="rounded-lg"
                   />
                 </div>
-                <div className="space-y-1">
-                  <span className="text-xs font-black text-[#5C4033] uppercase">كود الغرفة السري</span>
-                  <div className="font-mono text-3xl font-black tracking-widest text-[#2C2A29]">
-                    {roomCode}
-                  </div>
+                <div>
+                  <span className="text-xs font-black text-[#5C4033] block">امسح الرمز للدخول بالجوال</span>
+                  <span className="text-2xl font-black font-mono tracking-wider text-[#2C2A29]">
+                    كود الغرفة: {roomCode}
+                  </span>
                 </div>
               </div>
 
-              {/* Joined Players Roster */}
-              <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 flex flex-col justify-between">
+              {/* Contestants Lobby List */}
+              <div className="flex flex-col justify-between space-y-4">
                 <div>
-                  <div className="flex items-center justify-between border-b-2 border-[#2C2A29] pb-3 mb-4">
-                    <div className="flex items-center gap-2">
-                      <Users size={20} className="text-[#8A9A5B]" />
-                      <h3 className="font-black text-lg text-[#2C2A29]">المتنافسون الجاهزون</h3>
+                  <div className="flex items-center justify-between pb-3 border-b-2 border-[#2C2A29]">
+                    <div className="flex items-center gap-2 font-black text-lg text-[#2C2A29]">
+                      <Users size={20} />
+                      <span>المتسابقون ({players.length})</span>
                     </div>
-                    <span className="bg-[#E5E0D5] border border-[#2C2A29] font-black text-sm px-2.5 py-0.5 rounded-lg">
-                      {players.length} متسابق
-                    </span>
                   </div>
 
                   {players.length === 0 ? (
@@ -531,13 +581,21 @@ export const MutualLinkTVView: React.FC = () => {
                       بانتظار مسح الرمز وانضمام المتسابقين...
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 gap-2.5 max-h-60 overflow-y-auto p-1">
+                    <div className="grid grid-cols-2 gap-2.5 max-h-60 overflow-y-auto p-1 mt-3">
                       {players.map((p) => (
                         <div
                           key={p.id}
                           className="flex items-center justify-between gap-2 bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-3 py-2 rounded-xl"
                         >
-                          <span className="font-black text-sm text-[#2C2A29] truncate">{p.name}</span>
+                          <div className="flex items-center gap-1.5 truncate">
+                            {p.isReady && (
+                              <span className="text-[10px] bg-[#8A9A5B] text-[#F7F4EC] px-1.5 py-0.5 rounded-md font-black shrink-0">
+                                جاهز ✓
+                              </span>
+                            )}
+                            <span className="font-black text-sm text-[#2C2A29] truncate">{p.name}</span>
+                          </div>
+
                           {/* Host Kick Button [×] */}
                           <button
                             type="button"
@@ -574,19 +632,11 @@ export const MutualLinkTVView: React.FC = () => {
             {/* Top Prompt Banner */}
             <div className="text-center space-y-1">
               <span className="inline-block bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-4 py-1 rounded-xl text-xs font-black text-[#5C4033]">
-                {currentChallenge.type === 'CLUB_TO_CLUB'
-                  ? 'تحدي نادي ضد نادي 🛡️'
-                  : 'تحدي نادي مشترك 🛡️'}
+                تحدي نادٍ ضد نادٍ 🛡️
               </span>
-              {currentChallenge.type === 'CLUB_TO_CLUB' ? (
-                <h2 className="text-2xl sm:text-3xl font-black text-[#2C2A29] mb-4">
-                  من هو اللاعب الذي لعب للناديين؟
-                </h2>
-              ) : (
-                <h2 className="text-2xl sm:text-3xl font-black text-[#2C2A29] mb-4">
-                  ما هو النادي المشترك بين اللاعبين؟
-                </h2>
-              )}
+              <h2 className="text-2xl sm:text-3xl font-black text-[#2C2A29] mb-4">
+                من هو اللاعب الذي لعب للناديين؟
+              </h2>
             </div>
 
             {/* The Brutalist Link Arena (Entity A <== [ ؟ ] ==> Entity B) */}
@@ -694,27 +744,22 @@ export const MutualLinkTVView: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Small tag listing other possible valid answers */}
+                    {/* Small tag listing other possible valid answers discovered by Wikidata */}
                     {roundWinner.otherOptions && roundWinner.otherOptions.length > 0 && (
                       <div className="bg-[#F7F4EC] text-[#2C2A29] border border-[#2C2A29] rounded-xl px-3 py-1.5 text-xs font-bold flex flex-wrap items-center gap-1.5 shadow-[1px_1px_0px_#2C2A29]">
-                        <span className="text-[#5C4033] font-black">خيارات صحيحة أخرى:</span>
-                        <span>{roundWinner.otherOptions.slice(0, 5).join('، ')}</span>
+                        <span className="text-[#5C4033] font-black">خيارات ويكيداتا الصحيحة الأخرى:</span>
+                        <span>{roundWinner.otherOptions.slice(0, 6).join('، ')}</span>
                       </div>
                     )}
                   </div>
                 ) : isTimeout ? (
                   <div className="bg-[#C68B59] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] p-4 rounded-2xl space-y-2">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <AlertCircle size={32} className="text-[#F7F4EC] shrink-0" />
-                        <div>
-                          <h4 className="font-black text-xl md:text-2xl">
-                            انتهى الوقت! لم يجب أحد في الوقت المحدد
-                          </h4>
-                          <p className="text-xs md:text-sm font-bold opacity-95">
-                            حلقة الوصل كانت: <span className="underline font-black">{currentChallenge.revealItem.name}</span>
-                          </p>
-                        </div>
+                      <div>
+                        <h4 className="font-black text-xl">انتهى الوقت! لم يجب أحد</h4>
+                        <p className="text-xs opacity-90">
+                          حلقة الوصل الصحيحة: <span className="font-black underline">{currentChallenge.revealItem.name}</span>
+                        </p>
                       </div>
                       {advanceCountdown !== null && (
                         <span className="text-xs font-black bg-[#2C2A29] text-[#F7F4EC] px-3 py-1 rounded-xl">
@@ -722,123 +767,77 @@ export const MutualLinkTVView: React.FC = () => {
                         </span>
                       )}
                     </div>
-
-                    {/* Other possible answers list */}
                     {timeoutOtherOptions.length > 0 && (
                       <div className="bg-[#F7F4EC] text-[#2C2A29] border border-[#2C2A29] rounded-xl px-3 py-1.5 text-xs font-bold flex flex-wrap items-center gap-1.5 shadow-[1px_1px_0px_#2C2A29]">
                         <span className="text-[#5C4033] font-black">خيارات صحيحة أخرى:</span>
-                        <span>{timeoutOtherOptions.slice(0, 5).join('، ')}</span>
+                        <span>{timeoutOtherOptions.slice(0, 6).join('، ')}</span>
                       </div>
                     )}
                   </div>
                 ) : null}
               </div>
             )}
-
-            {/* Bottom Contestants Strip */}
-            <div className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl p-3 flex items-center justify-between overflow-x-auto">
-              <div className="flex items-center gap-2 text-xs font-black text-[#5C4033] px-2 shrink-0">
-                <Trophy size={16} className="text-[#8A9A5B]" />
-                <span>النتائج:</span>
-              </div>
-              <div className="flex items-center gap-3 overflow-x-auto py-1">
-                {sortedPlayers.map((p) => (
-                  <div
-                    key={p.id}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] shrink-0 ${
-                      roundWinner?.id === p.id ? 'bg-[#8A9A5B] text-white animate-pulse' : 'bg-[#E5E0D5] text-[#2C2A29]'
-                    }`}
-                  >
-                    <span className="font-black text-xs md:text-sm">{p.name}</span>
-                    <span className="bg-[#2C2A29] text-[#F7F4EC] px-2 py-0.5 rounded-lg text-xs font-black font-mono">
-                      {scores[p.id] || 0}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         )}
 
         {/* =======================================================
-            STATE 4: MATCH OVER (FINAL PODIUM - 10 ROUNDS)
+            STATE 4: MATCH OVER (FINAL PODIUM)
             ======================================================= */}
         {phase === 'MATCH_OVER' && (
-          <div className="flex flex-col items-center justify-center w-full max-w-4xl space-y-8 animate-fade-in text-center">
+          <div className="flex flex-col items-center justify-center w-full max-w-3xl space-y-8 animate-fade-in text-center">
+            <div className="w-24 h-24 bg-[#8A9A5B] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl flex items-center justify-center text-5xl">
+              🏆
+            </div>
+
             <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 bg-[#8A9A5B] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-4 py-1.5 rounded-xl font-black text-sm">
-                <Sparkles size={16} />
-                <span>نهاية التحدي (10 جولات)</span>
-              </div>
-              <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29]">
-                🎉 حفل تتويج ملك حلقة الوصل!
+              <span className="text-xs font-black uppercase tracking-wider text-[#8A9A5B] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1 rounded-full shadow-[2px_2px_0px_#2C2A29]">
+                انتهت الـ 10 جولات
+              </span>
+              <h2 className="text-4xl md:text-5xl font-black text-[#2C2A29]">
+                منصة تتويج حلقة الوصل!
               </h2>
             </div>
 
             {/* Podium Display */}
-            <div className="grid grid-cols-3 gap-4 items-end w-full max-w-2xl py-6">
-              {/* 2nd Place */}
-              {sortedPlayers[1] ? (
-                <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-4 flex flex-col items-center h-48 justify-end">
-                  <span className="text-xl font-black text-[#5C4033]">🥈 المركز 2</span>
-                  <h4 className="font-black text-base text-[#2C2A29] truncate max-w-full">
-                    {sortedPlayers[1].name}
-                  </h4>
-                  <span className="bg-[#E5E0D5] border border-[#2C2A29] px-3 py-0.5 rounded-lg font-black text-sm mt-2">
-                    {scores[sortedPlayers[1].id] || 0} نقاط
-                  </span>
-                </div>
-              ) : (
-                <div className="h-48" />
-              )}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
+              {sortedPlayers.slice(0, 3).map((p, idx) => {
+                const rankStyles = [
+                  'bg-[#8A9A5B] text-[#F7F4EC] order-1 md:order-2 md:-translate-y-4', // 1st
+                  'bg-[#F7F4EC] text-[#2C2A29] order-2 md:order-1', // 2nd
+                  'bg-[#E5E0D5] text-[#2C2A29] order-3 md:order-3', // 3rd
+                ];
+                const medals = ['🥇 المركز الأول', '🥈 المركز الثاني', '🥉 المركز الثالث'];
 
-              {/* 1st Place (Champion) */}
-              {sortedPlayers[0] ? (
-                <div className="bg-[#8A9A5B] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-2xl p-6 flex flex-col items-center h-60 justify-end transform -translate-y-4">
-                  <span className="text-2xl font-black">🥇 البطل</span>
-                  <h4 className="font-black text-xl truncate max-w-full">
-                    {sortedPlayers[0].name}
-                  </h4>
-                  <span className="bg-[#2C2A29] text-[#F7F4EC] px-4 py-1 rounded-xl font-black text-base mt-2 font-mono">
-                    {scores[sortedPlayers[0].id] || 0} نقاط
-                  </span>
-                </div>
-              ) : (
-                <div className="h-60" />
-              )}
-
-              {/* 3rd Place */}
-              {sortedPlayers[2] ? (
-                <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-4 flex flex-col items-center h-40 justify-end">
-                  <span className="text-lg font-black text-[#5C4033]">🥉 المركز 3</span>
-                  <h4 className="font-black text-sm text-[#2C2A29] truncate max-w-full">
-                    {sortedPlayers[2].name}
-                  </h4>
-                  <span className="bg-[#E5E0D5] border border-[#2C2A29] px-3 py-0.5 rounded-lg font-black text-sm mt-2">
-                    {scores[sortedPlayers[2].id] || 0} نقاط
-                  </span>
-                </div>
-              ) : (
-                <div className="h-40" />
-              )}
+                return (
+                  <div
+                    key={p.id}
+                    className={`border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-2xl p-6 flex flex-col items-center justify-center space-y-2 ${rankStyles[idx]}`}
+                  >
+                    <span className="text-xs font-black opacity-80">{medals[idx]}</span>
+                    <h3 className="text-2xl font-black truncate max-w-full">{p.name}</h3>
+                    <div className="text-3xl font-black font-mono">
+                      {scores[p.id] || 0} <span className="text-sm font-bold">نقطة</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
-            {/* Actions: Play Again or Back to Lobby */}
-            <div className="flex gap-4">
-              <button
-                onClick={handleStartGame}
-                className="bg-[#8A9A5B] hover:bg-[#78884E] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] px-6 py-3 rounded-xl font-black text-base flex items-center gap-2 cursor-pointer"
-              >
-                <RotateCcw size={18} />
-                <span>لعب تحدي جديد (10 جولات)</span>
-              </button>
-              <button
-                onClick={() => setPhase('LOBBY')}
-                className="bg-[#C68B59] hover:bg-[#B57A48] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] px-6 py-3 rounded-xl font-black text-base flex items-center gap-2 cursor-pointer"
-              >
-                <span>العودة للوبي</span>
-              </button>
-            </div>
+            {/* Replay / Reset Button */}
+            <button
+              onClick={() => {
+                sound.playClick();
+                setPhase('LOBBY');
+                setRound(1);
+                setRoundWinner(null);
+                setScores({});
+                broadcastEvent({ action: 'RESET_LOBBY' });
+              }}
+              className="mt-6 bg-[#F7F4EC] hover:bg-white text-[#2C2A29] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none py-3 px-8 rounded-xl font-black text-base flex items-center gap-2 cursor-pointer transition-all"
+            >
+              <RotateCcw size={18} />
+              <span>العودة للغرفة</span>
+            </button>
           </div>
         )}
       </main>

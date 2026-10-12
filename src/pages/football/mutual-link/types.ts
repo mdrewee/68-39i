@@ -1,4 +1,4 @@
-import { MutualLinkChallenge } from '../../../utils/mutualLinkEngine';
+import { WikidataClub, LiveMatchedPlayer } from '../../../utils/wikidataFootballService';
 
 export type MutualLinkPhase = 'LOBBY' | 'GAMEPLAY' | 'ROUND_REVEAL' | 'MATCH_OVER';
 
@@ -7,12 +7,31 @@ export interface MutualLinkPlayer {
   name: string;
   avatar?: string;
   score: number;
+  isReady?: boolean;
   isLockedOut?: boolean;
   lockedUntil?: number;
 }
 
+export interface MutualLinkChallenge {
+  id: string;
+  clubA: WikidataClub;
+  clubB: WikidataClub;
+  entityA: { id: string; name: string; image: string };
+  entityB: { id: string; name: string; image: string };
+  validPlayers: LiveMatchedPlayer[];
+  validAnswerStrings: string[];
+  validDisplayNames: string[];
+  revealItem: {
+    id?: string;
+    name: string;
+    image: string;
+    subtitle?: string;
+  };
+}
+
 export type MutualLinkAction =
   | 'LOBBY_STATE'
+  | 'PLAYER_READY'
   | 'GAME_START'
   | 'NEW_ROUND'
   | 'SUBMIT_GUESS'
@@ -37,6 +56,7 @@ export interface MutualLinkEventPayload {
   otherOptions?: string[];
   playerId?: string;
   playerName?: string;
+  isReady?: boolean;
   targetPlayerId?: string;
   players?: MutualLinkPlayer[];
   scores?: Record<string, number>;
