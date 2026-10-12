@@ -1,9 +1,10 @@
-import React, { FC } from 'react';
-import { ArrowRight, LogOut, Clock, Trophy } from 'lucide-react';
+import React, { FC, useState } from 'react';
+import { ArrowRight, LogOut, Clock, Trophy, Copy, Check } from 'lucide-react';
 import { sound } from '../../../../lib/audio';
 
 interface DraftTopBarProps {
   title?: string;
+  roomCode?: string;
   round?: number;
   totalRounds?: number;
   timeLeft?: number;
@@ -13,12 +14,36 @@ interface DraftTopBarProps {
 
 export const DraftTopBar: FC<DraftTopBarProps> = ({
   title = 'كوّن فريقك 5',
+  roomCode,
   round,
   totalRounds = 5,
   timeLeft,
   onExit,
   onEndRoom,
 }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyCode = async () => {
+    if (!roomCode) return;
+    sound.playClick();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(roomCode);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = roomCode;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy code:', err);
+    }
+  };
+
   return (
     <header className="w-full bg-[#E5E0D5] border-b-2 border-[#2C2A29] px-4 md:px-8 py-3 flex items-center justify-between z-10 shadow-sm select-none">
       {/* Title & Brand */}
@@ -50,8 +75,19 @@ export const DraftTopBar: FC<DraftTopBarProps> = ({
         </div>
       </div>
 
-      {/* Round & Timer Badges */}
+      {/* Round & Timer Badges & Room Code Copy */}
       <div className="flex items-center gap-3">
+        {roomCode && (
+          <button
+            onClick={handleCopyCode}
+            className="flex items-center gap-1.5 bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-3 py-1.5 rounded-xl text-xs md:text-sm font-black text-[#2C2A29] hover:bg-[#E5E0D5] transition-colors cursor-pointer"
+            title="نسخ كود الغرفة"
+          >
+            {copied ? <Check size={14} className="text-[#8A9A5B]" /> : <Copy size={14} className="text-[#5C4033]" />}
+            <span className="font-mono tracking-wider">{roomCode}</span>
+          </button>
+        )}
+
         {round !== undefined && (
           <div className="flex items-center gap-1.5 bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-3 py-1 rounded-xl font-black text-xs md:text-sm text-[#2C2A29]">
             <Trophy size={14} className="text-[#8A9A5B]" />

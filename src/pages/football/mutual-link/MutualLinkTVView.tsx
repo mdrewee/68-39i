@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { Play, Users, Trophy, RotateCcw, Link as LinkIcon, CheckCircle2 } from 'lucide-react';
+import { Play, Users, Trophy, RotateCcw, Link as LinkIcon, CheckCircle2, Copy, Check } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { MutualLinkTopBar } from './components/MutualLinkTopBar';
@@ -51,6 +51,27 @@ export const MutualLinkTVView: React.FC = () => {
 
   // Auto-advance countdown after reveal
   const [advanceCountdown, setAdvanceCountdown] = useState<number | null>(null);
+  const [copied, setCopied] = useState<boolean>(false);
+
+  const handleCopyCode = async () => {
+    sound.playClick();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(roomCode);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = roomCode;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy code:', err);
+    }
+  };
 
   // Background Pre-fetching Refs
   const nextChallengeRef = useRef<MutualLinkChallenge | null>(null);
@@ -558,11 +579,19 @@ export const MutualLinkTVView: React.FC = () => {
                     className="rounded-lg"
                   />
                 </div>
-                <div>
+                <div className="flex flex-col items-center gap-1.5 w-full">
                   <span className="text-xs font-black text-[#5C4033] block">امسح الرمز للدخول بالجوال</span>
-                  <span className="text-2xl font-black font-mono tracking-wider text-[#2C2A29]">
-                    كود الغرفة: {roomCode}
-                  </span>
+                  <button
+                    onClick={handleCopyCode}
+                    className="inline-flex items-center gap-2 bg-[#F7F4EC] hover:bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-x-[1px] active:translate-y-[1px] px-4 py-2 rounded-xl text-lg font-black font-mono text-[#2C2A29] cursor-pointer transition-all"
+                    title="اضغط لنسخ كود الغرفة"
+                  >
+                    {copied ? <Check size={18} className="text-[#8A9A5B]" /> : <Copy size={18} className="text-[#5C4033]" />}
+                    <span>{roomCode}</span>
+                    <span className="text-xs font-bold text-[#5C4033] font-sans">
+                      {copied ? '(تم النسخ ✓)' : '(نسخ الكود)'}
+                    </span>
+                  </button>
                 </div>
               </div>
 

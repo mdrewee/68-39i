@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback, FC } from 'react';
+import React, { useState, useEffect, useRef, useCallback, FC } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { RealtimeChannel } from '@supabase/supabase-js';
@@ -26,10 +26,8 @@ import {
   RotateCcw,
   Clock,
   Shield,
-  Trophy,
+  Copy,
   Check,
-  CheckCircle2,
-  Sparkles,
   Award,
 } from 'lucide-react';
 
@@ -57,6 +55,7 @@ export const DraftTVView: FC = () => {
   // Final AI Evaluation Results
   const [evaluations, setEvaluations] = useState<SquadAIEvaluation[]>([]);
   const [isEvaluating, setIsEvaluating] = useState<boolean>(false);
+  const [copied, setCopied] = useState<boolean>(false);
 
   // References
   const channelRef = useRef<RealtimeChannel | null>(null);
@@ -87,6 +86,26 @@ export const DraftTVView: FC = () => {
       payload,
     });
   }, []);
+
+  const handleCopyCode = async () => {
+    sound.playClick();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(roomCode);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = roomCode;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy code:', err);
+    }
+  };
 
   // Compute fair rotating turn order for round R (1-indexed)
   const computeTurnOrderForRound = (players: DraftContestant[], roundNum: number): string[] => {
@@ -121,7 +140,7 @@ export const DraftTVView: FC = () => {
   // Start the Draft (5 rounds)
   const handleStartGame = useCallback(() => {
     if (contestantsRef.current.length < 2) {
-      alert('ÙŠØ¬Ø¨ Ø§Ù†Ø¶Ù…Ø§Ù… Ù…ØªØ³Ø§Ø¨Ù‚ÙŠÙ† Ø§Ø«Ù†ÙŠÙ† Ø¹Ù„Ù‰ Ø§Ù„Ø£Ù‚Ù„ Ù„Ø¨Ø¯Ø¡ Ø§Ù„ØªØ­Ø¯ÙŠ!');
+      alert('يجب انضمام متسابقين اثنين على الأقل لبدء التحدي!');
       return;
     }
 
@@ -356,7 +375,7 @@ export const DraftTVView: FC = () => {
         if (status === 'SUBSCRIBED') {
           channel.track({
             id: 'host_tv',
-            name: 'Ø´Ø§Ø´Ø© Ø§Ù„Ø¹Ø±Ø¶',
+            name: 'شاشة العرض',
             role: 'tv',
             joinedAt: Date.now(),
           });
@@ -385,7 +404,8 @@ export const DraftTVView: FC = () => {
       dir="rtl"
     >
       <DraftTopBar
-        title="ÙƒÙˆÙ‘Ù† ÙØ±ÙŠÙ‚Ùƒ 5"
+        title="كوّن فريقك 5"
+        roomCode={roomCode}
         round={phase === 'DRAFTING' ? round : undefined}
         totalRounds={5}
         timeLeft={phase === 'DRAFTING' ? timeLeftSec : undefined}
@@ -416,13 +436,13 @@ export const DraftTVView: FC = () => {
             <div className="text-center space-y-2">
               <div className="inline-flex items-center gap-2 bg-[#8A9A5B] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-4 py-1.5 rounded-xl font-black text-sm">
                 <Shield size={16} />
-                <span>ÙƒÙˆÙ‘Ù† ÙØ±ÙŠÙ‚Ùƒ Ø§Ù„Ø®Ù…Ø§Ø³ÙŠ âš¡</span>
+                <span>كوّن فريقك الخماسي ⚡</span>
               </div>
               <h1 className="text-4xl md:text-5xl font-black text-[#2C2A29] tracking-tight">
-                Ø¯Ø±Ø§ÙØª Ø³Ø±ÙŠ ÙˆØªÙ‚ÙŠÙŠÙ… ØªÙƒØªÙŠÙƒÙŠ Ø°ÙƒÙŠ
+                درافت سري وتقييم تكتيكي ذكي
               </h1>
               <p className="text-sm md:text-base font-bold text-[#5C4033]">
-                Ø§Ø®ØªØ± 5 Ù„Ø§Ø¹Ø¨ÙŠÙ† ÙˆÙÙ‚ Ø´Ø±ÙˆØ· Ø¹Ø´ÙˆØ§Ø¦ÙŠØ© Ù…ØªØºÙŠØ±Ø© Ù„ÙƒÙ„ Ø¬ÙˆÙ„Ø©ØŒ ÙˆØªÙ†Ø§ÙˆØ¨ Ø¹Ø§Ø¯Ù„ Ø¨Ø§Ù„Ø¯ÙˆØ±!
+                اختر 5 لاعبين وفق شروط عشوائية متغيرة لكل جولة، وتناوب عادل بالدور!
               </p>
             </div>
 
@@ -433,11 +453,19 @@ export const DraftTVView: FC = () => {
                 <div className="bg-[#F7F4EC] p-3 rounded-2xl border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29]">
                   <QRCodeSVG value={joinUrl} size={190} level="H" className="rounded-lg" />
                 </div>
-                <div>
-                  <span className="text-xs font-black text-[#5C4033] block">Ø§Ù…Ø³Ø­ Ù„Ù„Ø¯Ø®ÙˆÙ„ Ø¨Ø§Ù„Ø¬ÙˆØ§Ù„</span>
-                  <span className="text-2xl font-black font-mono tracking-wider text-[#2C2A29]">
-                    ÙƒÙˆØ¯ Ø§Ù„ØºØ±ÙØ©: {roomCode}
-                  </span>
+                <div className="flex flex-col items-center gap-1.5 w-full">
+                  <span className="text-xs font-black text-[#5C4033] block">امسح للدخول بالجوال</span>
+                  <button
+                    onClick={handleCopyCode}
+                    className="inline-flex items-center gap-2 bg-[#F7F4EC] hover:bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-x-[1px] active:translate-y-[1px] px-4 py-2 rounded-xl text-lg font-black font-mono text-[#2C2A29] cursor-pointer transition-all"
+                    title="اضغط لنسخ كود الغرفة"
+                  >
+                    {copied ? <Check size={18} className="text-[#8A9A5B]" /> : <Copy size={18} className="text-[#5C4033]" />}
+                    <span>{roomCode}</span>
+                    <span className="text-xs font-bold text-[#5C4033] font-sans">
+                      {copied ? '(تم النسخ ✓)' : '(نسخ الكود)'}
+                    </span>
+                  </button>
                 </div>
               </div>
 
@@ -447,13 +475,13 @@ export const DraftTVView: FC = () => {
                   <div className="flex items-center justify-between pb-3 border-b-2 border-[#2C2A29]">
                     <div className="flex items-center gap-2 font-black text-lg text-[#2C2A29]">
                       <Users size={20} />
-                      <span>Ø§Ù„Ù…ØªØ³Ø§Ø¨Ù‚ÙˆÙ† ({contestants.length})</span>
+                      <span>المتسابقون ({contestants.length})</span>
                     </div>
                   </div>
 
                   {contestants.length === 0 ? (
                     <div className="py-12 text-center text-[#5C4033] font-bold text-sm">
-                      Ø¨Ø§Ù†ØªØ¸Ø§Ø± Ø§Ù†Ø¶Ù…Ø§Ù… Ø§Ù„Ù…ØªØ³Ø§Ø¨Ù‚ÙŠÙ† Ø¹Ø¨Ø± Ù…Ø³Ø­ Ø§Ù„ÙƒÙˆØ¯...
+                      بانتظار انضمام المتسابقين عبر مسح الكود...
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 gap-2.5 max-h-60 overflow-y-auto p-1 mt-3">
@@ -465,7 +493,7 @@ export const DraftTVView: FC = () => {
                           <div className="flex items-center gap-1.5 truncate">
                             {p.isReady && (
                               <span className="text-[10px] bg-[#8A9A5B] text-[#F7F4EC] px-1.5 py-0.5 rounded-md font-black shrink-0">
-                                Ø¬Ø§Ù‡Ø² âœ“
+                                جاهز ✓
                               </span>
                             )}
                             <span className="font-black text-sm text-[#2C2A29] truncate">{p.name}</span>
@@ -475,9 +503,9 @@ export const DraftTVView: FC = () => {
                             type="button"
                             onClick={() => handleKickPlayer(p.id)}
                             className="bg-[#C68B59] hover:bg-[#2C2A29] text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shrink-0 transition-colors cursor-pointer"
-                            title="Ø§Ø³ØªØ¨Ø¹Ø§Ø¯ Ø§Ù„Ù…ØªØ³Ø§Ø¨Ù‚"
+                            title="استبعاد المتسابق"
                           >
-                            Ã—
+                            ×
                           </button>
                         </div>
                       ))}
@@ -490,7 +518,7 @@ export const DraftTVView: FC = () => {
                   className="w-full mt-6 bg-[#8A9A5B] hover:bg-[#78884E] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none py-3.5 px-6 rounded-xl font-black text-lg flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
                   <Play size={20} className="fill-[#F7F4EC]" />
-                  <span>Ø§Ù†Ø·Ù„Ù‚ - Ø§Ø¨Ø¯Ø£ Ø§Ù„Ø¯Ø±Ø§ÙØª (5 Ø¬ÙˆÙ„Ø§Øª)</span>
+                  <span>انطلق - ابدأ الدرافت (5 جولات)</span>
                 </button>
               </div>
             </div>
@@ -505,14 +533,14 @@ export const DraftTVView: FC = () => {
             {/* Top Round Header */}
             <div className="text-center space-y-1">
               <span className="inline-block bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-4 py-1 rounded-xl text-xs font-black text-[#5C4033]">
-                Ø§Ù„Ø¬ÙˆÙ„Ø© {round} Ù…Ù† 5: Ø§Ø®ØªÙŠØ§Ø± {DRAFT_POSITION_NAMES[activePosition]}
+                الجولة {round} من 5: اختيار {DRAFT_POSITION_NAMES[activePosition]}
               </span>
             </div>
 
             {/* Massive Hero Condition Card */}
             <div className="w-full max-w-3xl bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-6 md:p-8 text-center space-y-3">
               <span className="text-xs font-black uppercase text-[#8A9A5B] tracking-wider block">
-                Ø´Ø±Ø· Ø§Ù„Ø¬ÙˆÙ„Ø© Ø§Ù„Ø¥Ù„Ø²Ø§Ù…ÙŠ
+                شرط الجولة الإلزامي
               </span>
               <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29]">
                 {activeCondition.title}
@@ -529,15 +557,15 @@ export const DraftTVView: FC = () => {
                   {currentTurnIndex + 1}
                 </div>
                 <div>
-                  <span className="text-xs font-bold opacity-80 block">Ø§Ù„Ø¯ÙˆØ± Ø§Ù„Ø­Ø§Ù„ÙŠ Ù„Ù„ØªØ¬Ù†ÙŠØ¯:</span>
+                  <span className="text-xs font-bold opacity-80 block">الدور الحالي للتجنيد:</span>
                   <h3 className="text-2xl font-black">
-                    {currentPicker?.name || 'Ø¬Ø§Ø±ÙŠ Ø§Ù„ØªØ­Ø¯ÙŠØ¯...'}
+                    {currentPicker?.name || 'جاري التحديد...'}
                   </h3>
                 </div>
               </div>
               <div className="flex items-center gap-1.5 font-mono font-black text-2xl bg-[#2C2A29] text-[#F7F4EC] px-4 py-1.5 rounded-xl">
                 <Clock size={20} />
-                <span>{timeLeftSec}Ø«</span>
+                <span>{timeLeftSec}ث</span>
               </div>
             </div>
 
@@ -560,7 +588,7 @@ export const DraftTVView: FC = () => {
                       {c.name}
                     </span>
 
-                    {/* 5 Mystery Boxes [ ØŸ ] */}
+                    {/* 5 Mystery Boxes [ ؟ ] */}
                     <div className="grid grid-cols-5 gap-1 w-full">
                       {DRAFT_ROUND_POSITIONS.map((pos) => {
                         const isLocked = Boolean(c.picks[pos]);
@@ -573,14 +601,14 @@ export const DraftTVView: FC = () => {
                                 : 'bg-[#F7F4EC] text-[#5C4033]'
                             }`}
                           >
-                            {isLocked ? 'âœ“' : 'ØŸ'}
+                            {isLocked ? '✓' : '؟'}
                           </div>
                         );
                       })}
                     </div>
 
                     <span className="text-[10px] font-bold text-[#5C4033] mt-2">
-                      ØªÙ… Ø§Ø®ØªÙŠØ§Ø± {totalPicked}/5
+                      تم اختيار {totalPicked}/5
                     </span>
                   </div>
                 );
@@ -597,13 +625,13 @@ export const DraftTVView: FC = () => {
             {isEvaluating ? (
               <div className="bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-12 space-y-4 max-w-xl mx-auto">
                 <div className="w-16 h-16 bg-[#8A9A5B] border-2 border-[#2C2A29] rounded-2xl mx-auto flex items-center justify-center text-3xl animate-bounce">
-                  âš¡
+                  ⚡
                 </div>
                 <h2 className="text-3xl font-black text-[#2C2A29]">
-                  Ø¬Ø§Ø±ÙŠ Ø§Ù„ØªØ­Ù„ÙŠÙ„ Ø§Ù„ØªÙƒØªÙŠÙƒÙŠ Ø§Ù„Ø°ÙƒÙŠ...
+                  جاري التحليل التكتيكي الذكي...
                 </h2>
                 <p className="text-sm font-bold text-[#5C4033]">
-                  Ø§Ù„Ù…Ø­Ù„Ù„ Ø§Ù„Ø¢Ù„ÙŠ ÙŠÙØ­Øµ Ø®Ø·ÙˆØ· Ø§Ù„Ù‡Ø¬ÙˆÙ… ÙˆØ§Ù„ÙˆØ³Ø· ÙˆØ§Ù„Ø¯ÙØ§Ø¹ ÙˆØ§Ù„Ø­Ø±Ø§Ø³Ø© ÙˆØ§Ù„Ø§Ù†Ø³Ø¬Ø§Ù… Ø§Ù„ØªÙƒØªÙŠÙƒÙŠ!
+                  المحلل الآلي يفحص خطوط الهجوم والوسط والدفاع والحراسة والانسجام التكتيكي!
                 </p>
               </div>
             ) : (
@@ -612,10 +640,10 @@ export const DraftTVView: FC = () => {
                 <div className="space-y-2">
                   <div className="inline-flex items-center gap-2 bg-[#8A9A5B] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-4 py-1.5 rounded-xl font-black text-sm">
                     <Award size={16} />
-                    <span>ØªÙ‚Ø±ÙŠØ± Ø§Ù„Ù…Ø­Ù„Ù„ Ø§Ù„ØªÙƒØªÙŠÙƒÙŠ Ø§Ù„Ø´Ø§Ù…Ù„</span>
+                    <span>تقرير المحلل التكتيكي الشامل</span>
                   </div>
                   <h2 className="text-4xl md:text-5xl font-black text-[#2C2A29]">
-                    ÙƒØ´Ù Ø§Ù„ØªØ´ÙƒÙŠÙ„Ø§Øª ÙˆÙ…Ù†ØµØ© Ø§Ù„ØªØªÙˆÙŠØ¬! ðŸ†
+                    كشف التشكيلات ومنصة التتويج! 🏆
                   </h2>
                 </div>
 
@@ -623,10 +651,10 @@ export const DraftTVView: FC = () => {
                 {rankedEvaluations[0] && (
                   <div className="bg-[#8A9A5B] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-6 max-w-2xl mx-auto space-y-2">
                     <span className="text-xs font-black uppercase tracking-wider bg-[#2C2A29] px-3 py-1 rounded-full">
-                      Ø¨Ø·Ù„ Ø§Ù„Ø¯Ø±Ø§ÙØª Ø§Ù„ØªÙƒØªÙŠÙƒÙŠ ðŸ¥‡
+                      بطل الدرافت التكتيكي 🥇
                     </span>
                     <h3 className="text-3xl font-black">
-                      ÙØ±ÙŠÙ‚ {rankedEvaluations[0].playerName}
+                      فريق {rankedEvaluations[0].playerName}
                     </h3>
                     <div className="text-4xl font-mono font-black">
                       {rankedEvaluations[0].overallPercentage}%
@@ -653,7 +681,7 @@ export const DraftTVView: FC = () => {
                           <div className="flex items-center justify-between pb-3 border-b-2 border-[#2C2A29]">
                             <div>
                               <span className="text-xs font-black text-[#8A9A5B]">
-                                Ø§Ù„Ù…Ø±ÙƒØ² #{idx + 1}
+                                المركز #{idx + 1}
                               </span>
                               <h4 className="text-xl font-black text-[#2C2A29]">
                                 {ev.playerName}
@@ -674,7 +702,7 @@ export const DraftTVView: FC = () => {
                                   className="flex items-center justify-between bg-[#E5E0D5] border border-[#2C2A29] px-2.5 py-1.5 rounded-lg text-xs"
                                 >
                                   <span className="font-bold text-[#5C4033]">{DRAFT_POSITION_NAMES[pos].split(' ')[0]}:</span>
-                                  <span className="font-black text-[#2C2A29]">{p?.name || 'Ù„Ù… ÙŠØ­Ø¯Ø¯'}</span>
+                                  <span className="font-black text-[#2C2A29]">{p?.name || 'لم يحدد'}</span>
                                 </div>
                               );
                             })}
@@ -683,23 +711,23 @@ export const DraftTVView: FC = () => {
                           {/* Tactical Line Ratings */}
                           <div className="grid grid-cols-5 gap-1 text-center py-2 bg-[#E5E0D5] rounded-xl border border-[#2C2A29]">
                             <div>
-                              <span className="text-[9px] font-bold block text-[#5C4033]">Ø­Ø±Ø§Ø³Ø©</span>
+                              <span className="text-[9px] font-bold block text-[#5C4033]">حراسة</span>
                               <span className="text-xs font-black">{ev.ratings.gk}%</span>
                             </div>
                             <div>
-                              <span className="text-[9px] font-bold block text-[#5C4033]">Ø¯ÙØ§Ø¹</span>
+                              <span className="text-[9px] font-bold block text-[#5C4033]">دفاع</span>
                               <span className="text-xs font-black">{ev.ratings.defense}%</span>
                             </div>
                             <div>
-                              <span className="text-[9px] font-bold block text-[#5C4033]">ÙˆØ³Ø·</span>
+                              <span className="text-[9px] font-bold block text-[#5C4033]">وسط</span>
                               <span className="text-xs font-black">{ev.ratings.midfield}%</span>
                             </div>
                             <div>
-                              <span className="text-[9px] font-bold block text-[#5C4033]">Ù‡Ø¬ÙˆÙ…</span>
+                              <span className="text-[9px] font-bold block text-[#5C4033]">هجوم</span>
                               <span className="text-xs font-black">{ev.ratings.attack}%</span>
                             </div>
                             <div>
-                              <span className="text-[9px] font-bold block text-[#5C4033]">Ø§Ù†Ø³Ø¬Ø§Ù…</span>
+                              <span className="text-[9px] font-bold block text-[#5C4033]">انسجام</span>
                               <span className="text-xs font-black">{ev.ratings.synergy}%</span>
                             </div>
                           </div>
@@ -717,7 +745,7 @@ export const DraftTVView: FC = () => {
                               key={sIdx}
                               className="text-[10px] font-black bg-[#8A9A5B] text-white px-2 py-0.5 rounded-md"
                             >
-                              âœ“ {str}
+                              ✓ {str}
                             </span>
                           ))}
                         </div>
@@ -739,7 +767,7 @@ export const DraftTVView: FC = () => {
                   className="bg-[#F7F4EC] hover:bg-white text-[#2C2A29] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none py-3.5 px-8 rounded-xl font-black text-base flex items-center gap-2 mx-auto cursor-pointer transition-all"
                 >
                   <RotateCcw size={18} />
-                  <span>Ø§Ù„Ø¹ÙˆØ¯Ø© Ù„Ù„ØºØ±ÙØ©</span>
+                  <span>العودة للغرفة</span>
                 </button>
               </div>
             )}
@@ -749,4 +777,3 @@ export const DraftTVView: FC = () => {
     </div>
   );
 };
-
