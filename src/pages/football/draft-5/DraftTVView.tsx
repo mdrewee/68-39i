@@ -8,8 +8,9 @@ import {
   DraftContestant,
   DraftEventPayload,
   SquadAIEvaluation,
-  DRAFT_ROUND_POSITIONS,
-  DRAFT_POSITION_NAMES,
+  DraftVerdictResult,
+  DRAFT_SLOTS_ORDER,
+  DRAFT_POSITION_SHORT_NAMES,
 } from './types';
 import {
   DraftCondition,
@@ -29,6 +30,9 @@ import {
   Copy,
   Check,
   Award,
+  Swords,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react';
 
 export const DraftTVView: FC = () => {
@@ -38,13 +42,12 @@ export const DraftTVView: FC = () => {
 
   // Core Game State
   const [phase, setPhase] = useState<DraftPhase>('LOBBY');
-  const [round, setRound] = useState<number>(1); // 1 to 5
-  const [activePosition, setActivePosition] = useState<DraftPosition>('GK');
+  const [round, setRound] = useState<number>(1); // 1 to 5 rounds
   const [activeCondition, setActiveCondition] = useState<DraftCondition | null>(null);
 
   // Participants & Secret Picks
   const [contestants, setContestants] = useState<DraftContestant[]>([]);
-  const [usedConditions, setUsedConditions] = useState<Set<string>>(new Set());
+  const [usedConditions, setUsedConditions] = useState<DraftCondition[]>([]);
   const [draftedPlayerIds, setDraftedPlayerIds] = useState<string[]>([]);
 
   // Rotating Turn State
@@ -52,8 +55,8 @@ export const DraftTVView: FC = () => {
   const [currentTurnIndex, setCurrentTurnIndex] = useState<number>(0);
   const [timeLeftSec, setTimeLeftSec] = useState<number>(30);
 
-  // Final AI Evaluation Results
-  const [evaluations, setEvaluations] = useState<SquadAIEvaluation[]>([]);
+  // Final Two-Tier AI Evaluation Results
+  const [verdictResult, setVerdictResult] = useState<DraftVerdictResult | null>(null);
   const [isEvaluating, setIsEvaluating] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
 
@@ -66,7 +69,7 @@ export const DraftTVView: FC = () => {
   const currentTurnIndexRef = useRef<number>(currentTurnIndex);
   const draftedPlayerIdsRef = useRef<string[]>(draftedPlayerIds);
   const activeConditionRef = useRef<DraftCondition | null>(activeCondition);
-  const activePositionRef = useRef<DraftPosition>(activePosition);
+  const usedConditionsRef = useRef<DraftCondition[]>(usedConditions);
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { roundRef.current = round; }, [round]);
@@ -75,7 +78,7 @@ export const DraftTVView: FC = () => {
   useEffect(() => { currentTurnIndexRef.current = currentTurnIndex; }, [currentTurnIndex]);
   useEffect(() => { draftedPlayerIdsRef.current = draftedPlayerIds; }, [draftedPlayerIds]);
   useEffect(() => { activeConditionRef.current = activeCondition; }, [activeCondition]);
-  useEffect(() => { activePositionRef.current = activePosition; }, [activePosition]);
+  useEffect(() => { usedConditionsRef.current = usedConditions; }, [usedConditions]);
 
   // Broadcast to all clients
   const broadcastEvent = useCallback((payload: DraftEventPayload) => {
@@ -147,27 +150,25 @@ export const DraftTVView: FC = () => {
     sound.playWhistle();
 
     const initialRound = 1;
-    const initialPos = DRAFT_ROUND_POSITIONS[0];
     const initialCondition = getRandomDraftCondition(new Set());
     const initialTurnOrder = computeTurnOrderForRound(contestantsRef.current, initialRound);
     const firstPickerId = initialTurnOrder[0];
     const firstPicker = contestantsRef.current.find((c) => c.id === firstPickerId);
 
-    setUsedConditions(new Set([initialCondition.id]));
+    setUsedConditions([initialCondition]);
     setRound(initialRound);
-    setActivePosition(initialPos);
     setActiveCondition(initialCondition);
     setTurnOrder(initialTurnOrder);
     setCurrentTurnIndex(0);
     setTimeLeftSec(30);
     setDraftedPlayerIds([]);
+    setVerdictResult(null);
     setPhase('DRAFTING');
 
     broadcastEvent({
       action: 'GAME_START',
       phase: 'DRAFTING',
       round: initialRound,
-      activePosition: initialPos,
       activeCondition: initialCondition,
       turnOrder: initialTurnOrder,
       currentPickerId: firstPickerId,
@@ -202,16 +203,16 @@ export const DraftTVView: FC = () => {
     // Current round finished! Check if we have more rounds
     const nextRound = roundRef.current + 1;
     if (nextRound <= 5) {
-      const nextPos = DRAFT_ROUND_POSITIONS[nextRound - 1];
-      const nextCondition = getRandomDraftCondition(new Set(usedConditions));
-      setUsedConditions((prev) => new Set([...prev, nextCondition.id]));
+      const prevIds = new Set(usedConditionsRef.current.map((c) => c.id));
+      const nextCondition = getRandomDraftCondition(prevIds);
+      const updatedUsedConditions = [...usedConditionsRef.current, nextCondition];
+      setUsedConditions(updatedUsedConditions);
 
       const nextTurnOrder = computeTurnOrderForRound(updatedContestants, nextRound);
       const firstPickerId = nextTurnOrder[0];
       const firstPicker = updatedContestants.find((c) => c.id === firstPickerId);
 
       setRound(nextRound);
-      setActivePosition(nextPos);
       setActiveCondition(nextCondition);
       setTurnOrder(nextTurnOrder);
       setCurrentTurnIndex(0);
@@ -221,7 +222,6 @@ export const DraftTVView: FC = () => {
       broadcastEvent({
         action: 'ROUND_ADVANCE',
         round: nextRound,
-        activePosition: nextPos,
         activeCondition: nextCondition,
         turnOrder: nextTurnOrder,
         currentPickerId: firstPickerId,
@@ -231,31 +231,37 @@ export const DraftTVView: FC = () => {
       return;
     }
 
-    // ALL 5 ROUNDS COMPLETED! Trigger Secret AI Reveal & Evaluation
+    // ALL 5 ROUNDS COMPLETED! Trigger Two-Tier Secret AI Evaluation
     sound.playVictory();
     setPhase('AI_REVEAL');
     setIsEvaluating(true);
 
     broadcastEvent({ action: 'AI_EVALUATION_START' });
 
-    // Execute Tactical AI Evaluation
-    evaluateDraftSquadsWithAI(updatedContestants, Array.from(usedConditions).map((id) => getRandomDraftCondition())).then((evals) => {
-      setEvaluations(evals);
+    // Execute Two-Tier Adjudication
+    evaluateDraftSquadsWithAI(updatedContestants, usedConditionsRef.current).then((result) => {
+      setVerdictResult(result);
       setIsEvaluating(false);
       broadcastEvent({
         action: 'AI_EVALUATION_DONE',
-        evaluations: evals,
+        evaluations: result.evaluations,
+        verdictResult: result,
       });
     });
-  }, [broadcastEvent, usedConditions]);
+  }, [broadcastEvent]);
 
-  // Handle Pick Locked from contestant
-  const handleContestantPick = useCallback((pickerId: string, position: DraftPosition, player: FootballPlayer) => {
+  // Handle Pick Locked from contestant into their chosen position
+  const handleContestantPick = useCallback((
+    pickerId: string,
+    position: DraftPosition,
+    player: FootballPlayer,
+    appliedCondition?: DraftCondition
+  ) => {
     // 1. Lock player globally in anti-steal list
     const updatedDrafted = [...draftedPlayerIdsRef.current, player.id];
     setDraftedPlayerIds(updatedDrafted);
 
-    // 2. Update contestant picks
+    // 2. Update contestant picks and associate condition
     const updatedContestants = contestantsRef.current.map((c) => {
       if (c.id === pickerId) {
         return {
@@ -263,6 +269,10 @@ export const DraftTVView: FC = () => {
           picks: {
             ...c.picks,
             [position]: player,
+          },
+          pickConditions: {
+            ...(c.pickConditions || { GK: null, DEF_1: null, DEF_2: null, MID: null, FWD: null }),
+            [position]: appliedCondition || activeConditionRef.current,
           },
         };
       }
@@ -326,7 +336,8 @@ export const DraftTVView: FC = () => {
               id: entry.id,
               name: entry.name || '',
               isReady: entry.isReady || false,
-              picks: existing ? existing.picks : { GK: null, DEF: null, MID: null, FWD: null, WILDCARD: null },
+              picks: existing ? existing.picks : { GK: null, DEF_1: null, DEF_2: null, MID: null, FWD: null },
+              pickConditions: existing ? existing.pickConditions : { GK: null, DEF_1: null, DEF_2: null, MID: null, FWD: null },
             });
           }
         });
@@ -345,7 +356,8 @@ export const DraftTVView: FC = () => {
                   id: entry.id,
                   name: entry.name || '',
                   isReady: false,
-                  picks: { GK: null, DEF: null, MID: null, FWD: null, WILDCARD: null },
+                  picks: { GK: null, DEF_1: null, DEF_2: null, MID: null, FWD: null },
+                  pickConditions: { GK: null, DEF_1: null, DEF_2: null, MID: null, FWD: null },
                 },
               ];
             });
@@ -368,7 +380,7 @@ export const DraftTVView: FC = () => {
             prev.map((p) => (p.id === ev.playerId ? { ...p, isReady: Boolean(ev.isReady) } : p))
           );
         } else if (ev.action === 'PICK_LOCKED' && ev.playerId && ev.pickedPosition && ev.pickedPlayer) {
-          handleContestantPick(ev.playerId, ev.pickedPosition, ev.pickedPlayer);
+          handleContestantPick(ev.playerId, ev.pickedPosition, ev.pickedPlayer, ev.appliedCondition);
         }
       })
       .subscribe((status) => {
@@ -395,8 +407,14 @@ export const DraftTVView: FC = () => {
   const currentPickerId = turnOrder[currentTurnIndex];
   const currentPicker = contestants.find((c) => c.id === currentPickerId);
 
-  // Ranked evaluations sorted by percentage
-  const rankedEvaluations = [...evaluations].sort((a, b) => b.overallPercentage - a.overallPercentage);
+  // Sorted evaluations: Higher condition count first, then overall percentage
+  const evaluationsList = verdictResult ? verdictResult.evaluations : [];
+  const rankedEvaluations = [...evaluationsList].sort((a, b) => {
+    if (b.validConditionsCount !== a.validConditionsCount) {
+      return b.validConditionsCount - a.validConditionsCount;
+    }
+    return b.overallPercentage - a.overallPercentage;
+  });
 
   return (
     <div
@@ -533,7 +551,7 @@ export const DraftTVView: FC = () => {
             {/* Top Round Header */}
             <div className="text-center space-y-1">
               <span className="inline-block bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-4 py-1 rounded-xl text-xs font-black text-[#5C4033]">
-                الجولة {round} من 5: اختيار {DRAFT_POSITION_NAMES[activePosition]}
+                الجولة {round} من 5: اختيار وتوزيع حر على التشكيلة
               </span>
             </div>
 
@@ -546,7 +564,7 @@ export const DraftTVView: FC = () => {
                 {activeCondition.title}
               </h2>
               <p className="text-base md:text-lg font-bold text-[#5C4033] max-w-xl mx-auto">
-                {activeCondition.description}
+                {activeCondition.rulePrompt}
               </p>
             </div>
 
@@ -590,7 +608,7 @@ export const DraftTVView: FC = () => {
 
                     {/* 5 Mystery Boxes [ ؟ ] */}
                     <div className="grid grid-cols-5 gap-1 w-full">
-                      {DRAFT_ROUND_POSITIONS.map((pos) => {
+                      {DRAFT_SLOTS_ORDER.map((pos) => {
                         const isLocked = Boolean(c.picks[pos]);
                         return (
                           <div
@@ -618,66 +636,73 @@ export const DraftTVView: FC = () => {
         )}
 
         {/* =======================================================
-            STATE 3: AI REVEAL & DEEP TACTICAL BREAKDOWN
+            STATE 3: TWO-TIER AI VERIFICATION & TACTICAL RESOLUTION
             ======================================================= */}
         {phase === 'AI_REVEAL' && (
           <div className="flex flex-col items-center justify-center w-full max-w-6xl space-y-8 animate-fade-in text-center">
-            {isEvaluating ? (
+            {isEvaluating || !verdictResult ? (
               <div className="bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-12 space-y-4 max-w-xl mx-auto">
-                <div className="w-16 h-16 bg-[#8A9A5B] border-2 border-[#2C2A29] rounded-2xl mx-auto flex items-center justify-center text-3xl animate-bounce">
+                <div className="w-16 h-16 bg-[#8A9A5B] border-2 border-[#2C2A29] rounded-2xl mx-auto flex items-center justify-center text-3xl animate-bounce text-white">
                   ⚡
                 </div>
                 <h2 className="text-3xl font-black text-[#2C2A29]">
-                  جاري التحليل التكتيكي الذكي...
+                  جاري فحص الشروط والتحليل التكتيكي الذكي...
                 </h2>
                 <p className="text-sm font-bold text-[#5C4033]">
-                  المحلل الآلي يفحص خطوط الهجوم والوسط والدفاع والحراسة والانسجام التكتيكي!
+                  المحرك الآلي يفحص مطابقة اللاعبين للشروط الخمسة، ويجهز التقييم التكتيكي في حال التعادل!
                 </p>
               </div>
             ) : (
               <div className="w-full space-y-8">
-                {/* Header */}
-                <div className="space-y-2">
+                {/* Massive Result Announcement Banner */}
+                <div className="space-y-3">
                   <div className="inline-flex items-center gap-2 bg-[#8A9A5B] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-4 py-1.5 rounded-xl font-black text-sm">
-                    <Award size={16} />
-                    <span>تقرير المحلل التكتيكي الشامل</span>
+                    {verdictResult.isTie ? <Swords size={16} /> : <Award size={16} />}
+                    <span>{verdictResult.isTie ? 'حسم التعادل التكتيكي المباشر' : 'نتيجة التحدي الرسمية'}</span>
                   </div>
-                  <h2 className="text-4xl md:text-5xl font-black text-[#2C2A29]">
-                    كشف التشكيلات ومنصة التتويج! 🏆
+
+                  <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29] leading-tight">
+                    {verdictResult.verdictBanner}
                   </h2>
                 </div>
 
-                {/* Champion Banner */}
-                {rankedEvaluations[0] && (
-                  <div className="bg-[#8A9A5B] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-6 max-w-2xl mx-auto space-y-2">
-                    <span className="text-xs font-black uppercase tracking-wider bg-[#2C2A29] px-3 py-1 rounded-full">
-                      بطل الدرافت التكتيكي 🥇
+                {/* Champion Showcase Card */}
+                <div className="bg-[#8A9A5B] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-6 max-w-2xl mx-auto space-y-2">
+                  <span className="text-xs font-black uppercase tracking-wider bg-[#2C2A29] text-white px-3 py-1 rounded-full">
+                    بطل الدرافت التكتيكي 🥇
+                  </span>
+                  <h3 className="text-3xl font-black">
+                    فريق {verdictResult.winnerName}
+                  </h3>
+                  <div className="flex items-center justify-center gap-4 text-sm font-bold">
+                    <span className="bg-[#2C2A29] px-3 py-1 rounded-xl">
+                      الشروط المحققة: {rankedEvaluations[0]?.validConditionsCount || 0}/5
                     </span>
-                    <h3 className="text-3xl font-black">
-                      فريق {rankedEvaluations[0].playerName}
-                    </h3>
-                    <div className="text-4xl font-mono font-black">
-                      {rankedEvaluations[0].overallPercentage}%
-                    </div>
-                    <p className="text-sm font-bold opacity-90">
-                      "{rankedEvaluations[0].critiqueTitle}"
-                    </p>
+                    <span className="bg-[#2C2A29] px-3 py-1 rounded-xl font-mono">
+                      القوة التكتيكية: {rankedEvaluations[0]?.overallPercentage || 0}%
+                    </span>
                   </div>
-                )}
+                  <p className="text-sm font-bold opacity-90 pt-1">
+                    "{rankedEvaluations[0]?.critiqueTitle}"
+                  </p>
+                </div>
 
-                {/* Squads Showcase Side by Side */}
+                {/* Phase 1 & 2: Contestants Squads, Condition Verification & Tactical Comparison */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full text-right">
                   {rankedEvaluations.map((ev, idx) => {
                     const contestant = contestants.find((c) => c.id === ev.playerId);
                     const picks = contestant?.picks;
+                    const isWinner = ev.playerId === verdictResult.winnerId;
 
                     return (
                       <div
                         key={ev.playerId}
-                        className="bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] rounded-2xl p-5 space-y-4 flex flex-col justify-between"
+                        className={`border-3 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] rounded-2xl p-5 space-y-4 flex flex-col justify-between ${
+                          isWinner ? 'bg-[#F7F4EC] ring-4 ring-[#8A9A5B]' : 'bg-[#F7F4EC]'
+                        }`}
                       >
                         <div>
-                          {/* Card Header */}
+                          {/* Card Header: Name + Conditions Fulfilled Badge */}
                           <div className="flex items-center justify-between pb-3 border-b-2 border-[#2C2A29]">
                             <div>
                               <span className="text-xs font-black text-[#8A9A5B]">
@@ -687,28 +712,55 @@ export const DraftTVView: FC = () => {
                                 {ev.playerName}
                               </h4>
                             </div>
-                            <div className="text-2xl font-black font-mono bg-[#8A9A5B] text-[#F7F4EC] px-3 py-1 rounded-xl border border-[#2C2A29]">
-                              {ev.overallPercentage}%
+                            <div className="flex flex-col items-end">
+                              <span className="text-xs font-black bg-[#8A9A5B] text-white px-2.5 py-1 rounded-xl border border-[#2C2A29]">
+                                {ev.validConditionsCount}/5 شروط
+                              </span>
+                              <span className="text-[11px] font-mono font-black text-[#5C4033] mt-1">
+                                {ev.overallPercentage}% قوة
+                              </span>
                             </div>
                           </div>
 
-                          {/* 5 Discovered Players Showcase */}
-                          <div className="space-y-1.5 my-3">
-                            {DRAFT_ROUND_POSITIONS.map((pos) => {
+                          {/* 5 Players Verification List with Conditions */}
+                          <div className="space-y-2 my-3">
+                            <span className="text-[10px] font-black uppercase text-[#5C4033] block">
+                              فحص شروط التشكيلة:
+                            </span>
+                            {DRAFT_SLOTS_ORDER.map((pos) => {
                               const p = picks ? picks[pos] : null;
+                              const ver = ev.conditionVerifications.find((v) => v.position === pos);
+                              const isValid = ver?.isValid ?? false;
+
                               return (
                                 <div
                                   key={pos}
-                                  className="flex items-center justify-between bg-[#E5E0D5] border border-[#2C2A29] px-2.5 py-1.5 rounded-lg text-xs"
+                                  className={`p-2 rounded-xl border text-xs space-y-0.5 ${
+                                    isValid
+                                      ? 'bg-[#E5E0D5] border-[#8A9A5B]'
+                                      : 'bg-[#F2DEDE] border-[#C68B59]'
+                                  }`}
                                 >
-                                  <span className="font-bold text-[#5C4033]">{DRAFT_POSITION_NAMES[pos].split(' ')[0]}:</span>
-                                  <span className="font-black text-[#2C2A29]">{p?.name || 'لم يحدد'}</span>
+                                  <div className="flex items-center justify-between font-black">
+                                    <span className="text-[#2C2A29]">
+                                      {DRAFT_POSITION_SHORT_NAMES[pos]}: {p?.name || 'فارغ'}
+                                    </span>
+                                    <span className={`flex items-center gap-1 font-bold ${isValid ? 'text-[#8A9A5B]' : 'text-[#C68B59]'}`}>
+                                      {isValid ? <CheckCircle size={14} /> : <XCircle size={14} />}
+                                      <span>{isValid ? 'محقق ✓' : 'غير محقق ✗'}</span>
+                                    </span>
+                                  </div>
+                                  {ver?.conditionTitle && (
+                                    <span className="text-[10px] font-bold text-[#5C4033] block">
+                                      الشرط: {ver.conditionTitle} ({ver.reason})
+                                    </span>
+                                  )}
                                 </div>
                               );
                             })}
                           </div>
 
-                          {/* Tactical Line Ratings */}
+                          {/* Tactical Line Ratings (Head-to-Head breakdown) */}
                           <div className="grid grid-cols-5 gap-1 text-center py-2 bg-[#E5E0D5] rounded-xl border border-[#2C2A29]">
                             <div>
                               <span className="text-[9px] font-bold block text-[#5C4033]">حراسة</span>
@@ -732,7 +784,7 @@ export const DraftTVView: FC = () => {
                             </div>
                           </div>
 
-                          {/* Tactical Breakdown Commentary */}
+                          {/* Tactical Commentary */}
                           <p className="text-xs font-bold text-[#5C4033] mt-3 leading-relaxed">
                             {ev.detailedBreakdown.tacticalSummary}
                           </p>
@@ -761,7 +813,7 @@ export const DraftTVView: FC = () => {
                     setPhase('LOBBY');
                     setRound(1);
                     setDraftedPlayerIds([]);
-                    setEvaluations([]);
+                    setVerdictResult(null);
                     broadcastEvent({ action: 'RESET_LOBBY' });
                   }}
                   className="bg-[#F7F4EC] hover:bg-white text-[#2C2A29] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none py-3.5 px-8 rounded-xl font-black text-base flex items-center gap-2 mx-auto cursor-pointer transition-all"
