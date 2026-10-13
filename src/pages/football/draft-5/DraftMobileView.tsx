@@ -359,6 +359,39 @@ export const DraftMobileView: FC = () => {
             setCurrentPickerId(ev.currentPickerId);
             setCurrentPickerName(ev.currentPickerName || '');
           }
+        } else if (ev.action === 'DRAFT_FINISHED') {
+          // TV broadcasted that drafting is completed: push final completed squad immediately
+          const currentPicks = myPicksRef.current;
+          const currentConds = myConditionsRef.current;
+          const squadSlots: PlayerSquad['slots'] = {};
+          (Object.keys(currentPicks) as DraftPosition[]).forEach((pos) => {
+            const p = currentPicks[pos];
+            const c = currentConds[pos];
+            if (p) {
+              squadSlots[pos] = {
+                playerName: p.name,
+                conditionId: c?.id || '',
+                conditionTitle: c?.title || '',
+              };
+            }
+          });
+
+          const finalSquadPayload: PlayerSquad = {
+            playerId: playerIdRef.current,
+            playerName: playerNameRef.current,
+            teamLogo: selectedClubRef.current?.badgeUrl,
+            selectedClub: selectedClubRef.current,
+            slots: squadSlots,
+          };
+
+          broadcastEvent({
+            action: 'PUSH_FINAL_SQUAD',
+            playerId: playerIdRef.current,
+            playerName: playerNameRef.current,
+            teamLogo: selectedClubRef.current?.badgeUrl,
+            selectedClub: selectedClubRef.current,
+            squad: finalSquadPayload,
+          });
         } else if (ev.action === 'AI_EVALUATION_START') {
           setPhase('AI_REVEAL');
         } else if (ev.action === 'RESET_LOBBY') {

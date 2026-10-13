@@ -122,7 +122,9 @@ export type DraftAction =
   | 'PLAYER_NEXT_ROUND_READY'
   | 'START_NEXT_ROUND'
   | 'RESET_LOBBY'
-  | 'ROOM_TERMINATED';
+  | 'ROOM_TERMINATED'
+  | 'DRAFT_FINISHED'
+  | 'PUSH_FINAL_SQUAD';
 
 export interface DraftEventPayload {
   action: DraftAction;

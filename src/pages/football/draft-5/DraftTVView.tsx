@@ -51,8 +51,12 @@ export const DraftTVView: FC = () => {
   // Participants & Secret Picks
   const [contestants, setContestants] = useState<DraftContestant[]>([]);
   const [allSquads, setAllSquads] = useState<Record<string, PlayerSquad>>({});
+  const persistentSquadsRef = useRef<Record<string, PlayerSquad>>({});
   const allSquadsRef = useRef<Record<string, PlayerSquad>>({});
-  useEffect(() => { allSquadsRef.current = allSquads; }, [allSquads]);
+  useEffect(() => {
+    allSquadsRef.current = allSquads;
+    persistentSquadsRef.current = { ...persistentSquadsRef.current, ...allSquads };
+  }, [allSquads]);
   const [usedConditions, setUsedConditions] = useState<DraftCondition[]>([]);
   const [draftedPlayerIds, setDraftedPlayerIds] = useState<string[]>([]);
 
@@ -119,9 +123,10 @@ export const DraftTVView: FC = () => {
     }
   };
 
-  // Compute fair rotating turn order for round R (1-indexed)
+  // Compute fair rotating turn order for round/condition R (1-indexed)
+  // Shifts starting index so the same player NEVER picks first every time
   const computeTurnOrderForRound = (players: DraftContestant[], roundNum: number): string[] => {
-    if (players.length === 0) return [];
+    if (!players || players.length === 0) return [];
     const n = players.length;
     const startIndex = (roundNum - 1) % n;
     const order: string[] = [];
@@ -172,6 +177,7 @@ export const DraftTVView: FC = () => {
     setTimeLeftSec(30);
     setDraftedPlayerIds([]);
     setAllSquads({});
+    persistentSquadsRef.current = {};
     setVerdictResult(null);
     setPhase('DRAFTING');
 
@@ -211,32 +217,39 @@ export const DraftTVView: FC = () => {
     const totalPicksRequired = updatedContestants.length * 5;
 
     if (totalPicksMade < totalPicksRequired) {
-      // Rotate turn to next contestant in turn order
-      const actualNextIdx = nextTurnIdx % currentOrder.length;
-      const nextPickerId = currentOrder[actualNextIdx];
-      const nextPicker = updatedContestants.find((c) => c.id === nextPickerId);
-
-      // Roll a new condition if all players have taken 1 pick for the previous condition
+      // Check if all players have taken 1 pick for the current condition
       const currentRoundPickCount = totalPicksMade % updatedContestants.length;
       if (currentRoundPickCount === 0) {
+        // Condition advanced! Condition round index = (totalPicksMade / players.length) + 1
+        const nextConditionRound = Math.floor(totalPicksMade / updatedContestants.length) + 1;
+        const rotatedOrder = computeTurnOrderForRound(updatedContestants, nextConditionRound);
         const prevIds = new Set(usedConditionsRef.current.map((c) => c.id));
         const nextCondition = getRandomDraftCondition(prevIds);
+        const nextPickerId = rotatedOrder[0];
+        const nextPicker = updatedContestants.find((c) => c.id === nextPickerId);
+
         setUsedConditions((prev) => [...prev, nextCondition]);
         setActiveCondition(nextCondition);
-
-        setCurrentTurnIndex(actualNextIdx);
+        setTurnOrder(rotatedOrder);
+        setCurrentTurnIndex(0);
         setTimeLeftSec(30);
         sound.playWhistle();
 
         broadcastEvent({
           action: 'ROUND_ADVANCE',
           activeCondition: nextCondition,
+          turnOrder: rotatedOrder,
           currentPickerId: nextPickerId,
           currentPickerName: nextPicker?.name || '',
           draftedPlayerIds: newDrafted,
         });
         return;
       }
+
+      // Rotate turn to next contestant in current turn order
+      const actualNextIdx = nextTurnIdx % currentOrder.length;
+      const nextPickerId = currentOrder[actualNextIdx];
+      const nextPicker = updatedContestants.find((c) => c.id === nextPickerId);
 
       setCurrentTurnIndex(actualNextIdx);
       setTimeLeftSec(30);
@@ -251,70 +264,79 @@ export const DraftTVView: FC = () => {
       return;
     }
 
-    // ALL 5 SLOTS COMPLETED FOR EVERYONE! Trigger Two-Tier Secret AI Evaluation
+    // ALL 5 SLOTS COMPLETED FOR EVERYONE! Trigger End-of-Draft Handshake & Evaluation
     sound.playVictory();
     setPhase('AI_REVEAL');
     setIsEvaluating(true);
 
+    // Broadcast DRAFT_FINISHED so all mobile clients push their latest full squads immediately
+    broadcastEvent({ action: 'DRAFT_FINISHED' });
     broadcastEvent({ action: 'AI_EVALUATION_START' });
 
-    // Execute Two-Tier Adjudication
-    // Merge updatedContestants with allSquads to guarantee 100% squad completeness
-    const mergedContestants: DraftContestant[] = updatedContestants.map((c) => {
-      const sq = allSquadsRef.current[c.id];
-      if (!sq) return c;
-      const mergedPicks = { ...c.picks };
-      const mergedConds = { ...(c.pickConditions || { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null }) };
-      (Object.keys(sq.slots || {}) as DraftPosition[]).forEach((pos) => {
-        const slot = sq.slots[pos];
-        if (slot && !mergedPicks[pos]) {
-          mergedPicks[pos] = {
-            id: 'synced_' + pos + '_' + c.id,
-            name: slot.playerName,
-            aliases: [slot.playerName],
-            nationality: 'غير محدد',
-            nationalityCode: 'UN',
-            clubs: [],
-            currentClub: 'مخصص',
-            position: pos === 'GK' ? 'GK' : pos === 'MID' ? 'MID' : pos === 'FWD' ? 'FWD' : 'DEF',
-            traits: [],
-            trophies: [],
-          };
-          if (!mergedConds[pos]) {
-            mergedConds[pos] = {
-              id: slot.conditionId || 'c_general',
-              title: slot.conditionTitle || 'شرط معتمد',
-              rulePrompt: slot.conditionTitle || 'شرط معتمد',
+    // Execute Two-Tier Adjudication after a brief timeout (allowing mobile PUSH_FINAL_SQUAD packets to arrive)
+    setTimeout(() => {
+      const currentPersisted = { ...persistentSquadsRef.current, ...allSquadsRef.current };
+      const latestContestants = contestantsRef.current.length > 0 ? contestantsRef.current : updatedContestants;
+
+      const mergedContestants: DraftContestant[] = latestContestants.map((c) => {
+        const sq = currentPersisted[c.id];
+        const mergedPicks = { ...c.picks };
+        const mergedConds = { ...(c.pickConditions || { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null }) };
+
+        if (sq && sq.slots) {
+          (Object.keys(sq.slots) as DraftPosition[]).forEach((pos) => {
+            const slot = sq.slots[pos];
+            if (slot && !mergedPicks[pos]) {
+              mergedPicks[pos] = {
+                id: 'synced_' + pos + '_' + c.id,
+                name: slot.playerName,
+                aliases: [slot.playerName],
+                nationality: 'غير محدد',
+                nationalityCode: 'UN',
+                clubs: [],
+                currentClub: 'مخصص',
+                position: pos === 'GK' ? 'GK' : pos === 'MID' ? 'MID' : pos === 'FWD' ? 'FWD' : 'DEF',
+                traits: [],
+                trophies: [],
               };
-          }
+              if (!mergedConds[pos]) {
+                mergedConds[pos] = {
+                  id: slot.conditionId || 'c_general',
+                  title: slot.conditionTitle || 'شرط معتمد',
+                  rulePrompt: slot.conditionTitle || 'شرط معتمد',
+                };
+              }
+            }
+          });
         }
+
+        return {
+          ...c,
+          selectedClub: c.selectedClub || sq?.selectedClub || null,
+          picks: mergedPicks,
+          pickConditions: mergedConds,
+        };
       });
-      return {
-        ...c,
-        selectedClub: c.selectedClub || sq.selectedClub || null,
-        picks: mergedPicks,
-        pickConditions: mergedConds,
-      };
-    });
 
-    evaluateDraftSquadsWithAI(mergedContestants, usedConditionsRef.current).then((result) => {
-      setVerdictResult(result);
-      setIsEvaluating(false);
+      evaluateDraftSquadsWithAI(mergedContestants, usedConditionsRef.current).then((result) => {
+        setVerdictResult(result);
+        setIsEvaluating(false);
 
-      // Record win for current round winner
-      if (result.winnerId) {
-        setRoundWins((prev) => ({
-          ...prev,
-          [result.winnerId]: (prev[result.winnerId] || 0) + 1,
-        }));
-      }
+        // Record win for current round winner
+        if (result.winnerId) {
+          setRoundWins((prev) => ({
+            ...prev,
+            [result.winnerId]: (prev[result.winnerId] || 0) + 1,
+          }));
+        }
 
-      broadcastEvent({
-        action: 'AI_EVALUATION_DONE',
-        evaluations: result.evaluations,
-        verdictResult: result,
+        broadcastEvent({
+          action: 'AI_EVALUATION_DONE',
+          evaluations: result.evaluations,
+          verdictResult: result,
+        });
       });
-    });
+    }, 700);
   }, [broadcastEvent]);
 
   // Handle Pick Locked from contestant into their chosen position
@@ -539,9 +561,10 @@ export const DraftTVView: FC = () => {
           if (ev.playerId && ev.pickedPosition && ev.pickedPlayer) {
             handleContestantPick(ev.playerId, ev.pickedPosition, ev.pickedPlayer, ev.appliedCondition);
           }
-        } else if (ev.action === 'DRAFT_COMPLETE' && ev.playerId && ev.squad) {
+        } else if ((ev.action === 'DRAFT_COMPLETE' || ev.action === 'PUSH_FINAL_SQUAD') && ev.playerId && ev.squad) {
           const pId = ev.playerId;
           const incomingSquad = ev.squad;
+          persistentSquadsRef.current[pId] = incomingSquad;
           setAllSquads((prev) => ({
             ...prev,
             [pId]: incomingSquad,
@@ -571,7 +594,7 @@ export const DraftTVView: FC = () => {
                     id: sl.conditionId || 'c_general',
                     title: sl.conditionTitle || 'شرط معتمد',
                     rulePrompt: sl.conditionTitle || 'شرط معتمد',
-                    };
+                  };
                 }
               });
               return {
