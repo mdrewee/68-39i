@@ -250,7 +250,7 @@ export const PlayerMobileView: React.FC = () => {
         console.log(`[CHANNEL STATUS]: ${status}`);
         if (status === 'SUBSCRIBED') {
           isSubscribedRef.current = true;
-          console.log('[Mobile] Subscribed, requesting current room state...');
+          console.log('[Mobile] Subscribed, tracking presence cleanly...');
           try {
             await channel.track({
               id: playerId,
@@ -258,28 +258,8 @@ export const PlayerMobileView: React.FC = () => {
               isReady: false,
               joinedAt: Date.now(),
             });
-            channel.send({
-              type: 'broadcast',
-              event: 'REQUEST_ROOM_STATE',
-              payload: { playerId }
-            });
-            channel.send({
-              type: 'broadcast',
-              event: 'REQUEST_PHASE_SYNC',
-              payload: { playerId }
-            });
-            channel.send({
-              type: 'broadcast',
-              event: 'room_event',
-              payload: {
-                roomCode: cleanCode,
-                type: 'REQUEST_ROOM_STATE',
-                data: {},
-                timestamp: Date.now(),
-              },
-            });
           } catch (e) {
-            console.warn('[Request room state warn]:', e);
+            console.warn('[Track presence warn]:', e);
           }
         } else {
           isSubscribedRef.current = false;

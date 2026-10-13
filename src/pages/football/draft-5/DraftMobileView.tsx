@@ -23,9 +23,15 @@ export const DraftMobileView: FC = () => {
   const navigate = useNavigate();
   const roomCode = (rawCode || '000000').toUpperCase();
 
-  // Player Profile
+  // Player Profile (Unique per browser tab in SessionStorage)
   const [playerId] = useState<string>(() => {
-    return sessionStorage.getItem('draft_player_id') || `p_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    let pid = sessionStorage.getItem('draft_player_id') || sessionStorage.getItem('party_player_id');
+    if (!pid) {
+      pid = `p_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+      sessionStorage.setItem('draft_player_id', pid);
+      sessionStorage.setItem('party_player_id', pid);
+    }
+    return pid;
   });
   const [playerName, setPlayerName] = useState<string>(() => {
     return sessionStorage.getItem('draft_player_name') || '';

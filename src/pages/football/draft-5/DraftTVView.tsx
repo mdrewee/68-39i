@@ -461,57 +461,50 @@ export const DraftTVView: FC = () => {
       },
     });
 
-    channel
-      .on('presence', { event: 'sync' }, () => {
-        const state = channel.presenceState();
-        const rawEntries = Object.values(state).flat() as any[];
-        const map = new Map<string, DraftContestant>();
+    const syncConnectedPlayers = () => {
+      const state = channel.presenceState();
+      const playerList: any[] = [];
+      const seenIds = new Set<string>();
 
-        rawEntries.forEach((entry) => {
-          if (entry.id && entry.id !== 'host_tv' && !map.has(entry.id)) {
-            const existing = contestantsRef.current.find((c) => c.id === entry.id);
-            map.set(entry.id, {
-              id: entry.id,
-              name: entry.name || '',
-              isReady: entry.isReady || false,
-              selectedClub: entry.selectedClub || (entry.teamName && entry.teamLogo ? { id: entry.teamId || 'club', name: entry.teamName, league: '', country: '', badgeUrl: entry.teamLogo } : existing?.selectedClub) || null,
-              picks: existing ? existing.picks : { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
-              pickConditions: existing ? existing.pickConditions : { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
-              readyForNextRound: existing?.readyForNextRound || false,
-            });
-          }
+      Object.values(state).forEach((presences: any) => {
+        if (Array.isArray(presences)) {
+          presences.forEach((p) => {
+            if (p && p.id && p.id !== 'host_tv' && !seenIds.has(p.id)) {
+              seenIds.add(p.id);
+              playerList.push(p);
+            }
+          });
+        }
+      });
+
+      console.log('[TV PRESENCE SYNC] Total Connected Players:', playerList.length, playerList);
+
+      setContestants((prev) => {
+        const existingMap = new Map(prev.map((c) => [c.id, c]));
+        return playerList.map((entry) => {
+          const existing = existingMap.get(entry.id);
+          const club = entry.selectedClub || (entry.teamName && entry.teamLogo ? { id: entry.teamId || 'club', name: entry.teamName, league: '', country: '', badgeUrl: entry.teamLogo } : existing?.selectedClub) || null;
+          return {
+            id: entry.id,
+            name: entry.name || existing?.name || 'متسابق',
+            isReady: entry.isReady !== undefined ? Boolean(entry.isReady) : (existing?.isReady || false),
+            selectedClub: club,
+            picks: existing ? existing.picks : { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
+            pickConditions: existing ? existing.pickConditions : { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
+            readyForNextRound: existing?.readyForNextRound || false,
+          };
         });
+      });
+    };
 
-        setContestants(Array.from(map.values()));
-      })
+    channel
+      .on('presence', { event: 'sync' }, syncConnectedPlayers)
       .on('presence', { event: 'join' }, ({ newPresences }) => {
         sound.playPlayerJoin();
-        newPresences.forEach((entry: any) => {
-          if (entry.id && entry.id !== 'host_tv') {
-            setContestants((prev) => {
-              if (prev.some((p) => p.id === entry.id)) return prev;
-              return [
-                ...prev,
-                {
-                  id: entry.id,
-                  name: entry.name || '',
-                  isReady: false,
-                  selectedClub: entry.selectedClub || (entry.teamName && entry.teamLogo ? { id: entry.teamId || 'club', name: entry.teamName, league: '', country: '', badgeUrl: entry.teamLogo } : null),
-                  picks: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
-                  pickConditions: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
-                  readyForNextRound: false,
-                },
-              ];
-            });
-          }
-        });
+        syncConnectedPlayers();
       })
-      .on('presence', { event: 'leave' }, ({ leftPresences }) => {
-        leftPresences.forEach((entry: any) => {
-          if (entry.id) {
-            setContestants((prev) => prev.filter((p) => p.id !== entry.id));
-          }
-        });
+      .on('presence', { event: 'leave' }, () => {
+        syncConnectedPlayers();
       })
       .on('broadcast', { event: 'draft_event' }, ({ payload }) => {
         if (!payload) return;
