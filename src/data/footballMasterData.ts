@@ -210,6 +210,40 @@ export const FOOTBALL_CLUBS_MASTER: FootballClubItem[] = [
 
 export const FOOTBALL_PLAYERS_MASTER: FootballPlayer[] = [
   {
+    "id": "p_ilkay_gundogan",
+    "name": "إلكاي غوندوغان",
+    "aliases": [
+      "غوندوغان",
+      "جوندوجان",
+      "جوندوجان",
+      "إلكاي",
+      "الكاي",
+      "gundogan",
+      "ilkay gundogan"
+    ],
+    "nationality": "ألمانيا",
+    "nationalityCode": "DE",
+    "clubs": [
+      "نورنبرغ",
+      "بوروسيا دورتموند",
+      "مانشستر سيتي",
+      "برشلونة",
+      "مانشستر سيتي"
+    ],
+    "currentClub": "مانشستر سيتي",
+    "position": "MID",
+    "traits": [
+      "قائد",
+      "صانع ألعاب",
+      "تمريرات"
+    ],
+    "trophies": [
+      "دوري أبطال أوروبا",
+      "الدوري الإنجليزي",
+      "الدوري الألماني"
+    ]
+  },
+  {
     "id": "p_joao_cancelo",
     "name": "جواو كانسيلو",
     "aliases": [

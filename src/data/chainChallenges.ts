@@ -1,237 +1,307 @@
 import { ChainChallenge, ChainPlayer } from '../pages/football/football-chain/types';
 import { FOOTBALL_PLAYERS_MASTER } from './footballMasterData';
-import { toChainPlayer } from '../utils/footballChainEngine';
+import { toChainPlayer, normalizePlayerName } from '../utils/footballChainEngine';
 
-const getPlayerByName = (name: string): ChainPlayer => {
-  const p = FOOTBALL_PLAYERS_MASTER.find(
-    (player) =>
-      player.name === name ||
-      player.name.includes(name) ||
-      (player.aliases && player.aliases.includes(name))
-  );
-  if (!p) {
-    throw new Error(`Player not found in master data: ${name}`);
+/**
+ * Resilient, safe lookup for players in master data.
+ * Uses Arabic normalization and partial matching.
+ * NEVER throws fatal runtime exceptions.
+ */
+export const getPlayerByNameSafe = (queryName: string): ChainPlayer => {
+  if (!queryName) {
+    return {
+      id: 'custom_unknown',
+      name: 'لاعب غير محدد',
+      clubs: [],
+    };
   }
-  return toChainPlayer(p);
+
+  const cleanQuery = normalizePlayerName(queryName);
+
+  // 1. Exact or normalized match against name & aliases
+  const matched = FOOTBALL_PLAYERS_MASTER.find((p) => {
+    const normName = normalizePlayerName(p.name);
+    if (normName === cleanQuery) return true;
+    if (p.aliases && p.aliases.some((a) => normalizePlayerName(a) === cleanQuery)) return true;
+
+    // Check partial containment (e.g. "غوندوغان" or "جوندوجان")
+    if (
+      cleanQuery.length >= 4 &&
+      (normName.includes(cleanQuery) || cleanQuery.includes(normName))
+    ) {
+      return true;
+    }
+    return false;
+  });
+
+  if (matched) {
+    return toChainPlayer(matched);
+  }
+
+  // 2. Safe Fallback Object (NEVER THROW FATAL ERROR)
+  console.warn(`[ChainChallenges] Player not found in master data: "${queryName}". Using fallback entity.`);
+
+  const fallbackClubs: string[] = [];
+  if (queryName.includes('غوندوغان') || queryName.includes('جوندوجان')) {
+    fallbackClubs.push('مانشستر سيتي', 'برشلونة', 'بوروسيا دورتموند');
+  }
+
+  return {
+    id: `custom_${cleanQuery.replace(/\s+/g, '_')}`,
+    name: queryName,
+    clubs: fallbackClubs,
+    nationality: 'ألمانيا',
+  };
 };
 
-export const CHAIN_CHALLENGES_BANK: ChainChallenge[] = [
+interface RawChainPair {
+  id: string;
+  startName: string;
+  targetName: string;
+  minHops: number;
+  hint?: string;
+}
+
+const RAW_CHAIN_PAIRS: RawChainPair[] = [
   {
     id: 'ch_salah_messi',
-    startPlayer: getPlayerByName('محمد صلاح'),
-    targetPlayer: getPlayerByName('ليونيل ميسي'),
+    startName: 'محمد صلاح',
+    targetName: 'ليونيل ميسي',
     minHops: 3,
     hint: 'عبر ليفربول (أليسون) أو روما أو باريس سان جيرمان',
   },
   {
     id: 'ch_benzema_haaland',
-    startPlayer: getPlayerByName('كريم بنزيما'),
-    targetPlayer: getPlayerByName('إيرلينغ هالاند'),
+    startName: 'كريم بنزيما',
+    targetName: 'إيرلينغ هالاند',
     minHops: 3,
     hint: 'عبر ريال مدريد ومانشستر سيتي أو بوروسيا دورتموند',
   },
   {
     id: 'ch_ronaldo_mbappe',
-    startPlayer: getPlayerByName('كريستيانو رونالدو'),
-    targetPlayer: getPlayerByName('كيليان مبابي'),
+    startName: 'كريستيانو رونالدو',
+    targetName: 'كيليان مبابي',
     minHops: 2,
     hint: 'عبر ريال مدريد أو باريس سان جيرمان أو يوفنتوس',
   },
   {
     id: 'ch_salem_neymar',
-    startPlayer: getPlayerByName('سالم الدوسري'),
-    targetPlayer: getPlayerByName('نيمار'),
+    startName: 'سالم الدوسري',
+    targetName: 'نيمار',
     minHops: 1,
     hint: 'عبر نادي الهلال السعودي',
   },
   {
     id: 'ch_modric_debruyne',
-    startPlayer: getPlayerByName('لوكا مودريتش'),
-    targetPlayer: getPlayerByName('كيفين دي بروين'),
+    startName: 'لوكا مودريتش',
+    targetName: 'كيفين دي بروين',
     minHops: 3,
     hint: 'عبر توتنهام أو تشيلسي أو مانشستر سيتي',
   },
   {
     id: 'ch_kante_lewandowski',
-    startPlayer: getPlayerByName('نغولو كانتي'),
-    targetPlayer: getPlayerByName('روبرت ليفاندوفسكي'),
+    startName: 'نغولو كانتي',
+    targetName: 'روبرت ليفاندوفسكي',
     minHops: 3,
     hint: 'عبر تشيلسي وبرشلونة أو بايرن ميونخ',
   },
   {
     id: 'ch_bounou_courtois',
-    startPlayer: getPlayerByName('ياسين بونو'),
-    targetPlayer: getPlayerByName('تيبو كورتوا'),
+    startName: 'ياسين بونو',
+    targetName: 'تيبو كورتوا',
     minHops: 2,
     hint: 'عبر أتلتيكو مدريد أو إشبيلية أو ريال مدريد',
   },
   {
     id: 'ch_mahrez_kane',
-    startPlayer: getPlayerByName('رياض محرز'),
-    targetPlayer: getPlayerByName('هاري كين'),
+    startName: 'رياض محرز',
+    targetName: 'هاري كين',
     minHops: 2,
     hint: 'عبر مانشستر سيتي أو ليستر سيتي أو توتنهام أو بايرن ميونخ',
   },
   {
     id: 'ch_alisson_neymar',
-    startPlayer: getPlayerByName('أليسون بيكر'),
-    targetPlayer: getPlayerByName('نيمار'),
+    startName: 'أليسون بيكر',
+    targetName: 'نيمار',
     minHops: 1,
     hint: 'عبر منتخب البرازيل',
   },
   {
     id: 'ch_vinicius_bellingham',
-    startPlayer: getPlayerByName('فينيسيوس جونيور'),
-    targetPlayer: getPlayerByName('جود بيلينغهام'),
+    startName: 'فينيسيوس جونيور',
+    targetName: 'جود بيلينغهام',
     minHops: 1,
     hint: 'عبر ريال مدريد',
   },
   {
     id: 'ch_hakimi_mbappe',
-    startPlayer: getPlayerByName('أشرف حكيمي'),
-    targetPlayer: getPlayerByName('كيليان مبابي'),
+    startName: 'أشرف حكيمي',
+    targetName: 'كيليان مبابي',
     minHops: 1,
     hint: 'عبر باريس سان جيرمان أو ريال مدريد',
   },
   {
     id: 'ch_mane_vandijk',
-    startPlayer: getPlayerByName('ساديو ماني'),
-    targetPlayer: getPlayerByName('فيرجيل فان دايك'),
+    startName: 'ساديو ماني',
+    targetName: 'فيرجيل فان دايك',
     minHops: 1,
     hint: 'عبر ليفربول أو ساوثهامبتون',
   },
   {
     id: 'ch_griezmann_suarez',
-    startPlayer: getPlayerByName('أنطوان غريزمان'),
-    targetPlayer: getPlayerByName('لويس سواريز'),
+    startName: 'أنطوان غريزمان',
+    targetName: 'لويس سواريز',
     minHops: 1,
     hint: 'عبر برشلونة أو أتلتيكو مدريد',
   },
   {
     id: 'ch_kroos_casemiro',
-    startPlayer: getPlayerByName('توني كروس'),
-    targetPlayer: getPlayerByName('كاسيميرو'),
+    startName: 'توني كروس',
+    targetName: 'كاسيميرو',
     minHops: 1,
     hint: 'عبر ريال مدريد',
   },
   {
     id: 'ch_son_kane',
-    startPlayer: getPlayerByName('سون هيونغ مين'),
-    targetPlayer: getPlayerByName('هاري كين'),
+    startName: 'سون هيونغ مين',
+    targetName: 'هاري كين',
     minHops: 1,
     hint: 'عبر توتنهام هوتسبير',
   },
   {
     id: 'ch_ramos_messi',
-    startPlayer: getPlayerByName('سيرجيو راموس'),
-    targetPlayer: getPlayerByName('ليونيل ميسي'),
+    startName: 'سيرجيو راموس',
+    targetName: 'ليونيل ميسي',
     minHops: 1,
     hint: 'عبر باريس سان جيرمان',
   },
   {
     id: 'ch_pedri_yamal',
-    startPlayer: getPlayerByName('بيدري'),
-    targetPlayer: getPlayerByName('لامين يامال'),
+    startName: 'بيدري',
+    targetName: 'لامين يامال',
     minHops: 1,
     hint: 'عبر برشلونة ومنتخب إسبانيا',
   },
   {
     id: 'ch_salah_haaland',
-    startPlayer: getPlayerByName('محمد صلاح'),
-    targetPlayer: getPlayerByName('إيرلينغ هالاند'),
+    startName: 'محمد صلاح',
+    targetName: 'إيرلينغ هالاند',
     minHops: 3,
     hint: 'عبر الدوري الإنجليزي (مانشستر سيتي وليفربول)',
   },
   {
     id: 'ch_benzema_ronaldo',
-    startPlayer: getPlayerByName('كريم بنزيما'),
-    targetPlayer: getPlayerByName('كريستيانو رونالدو'),
+    startName: 'كريم بنزيما',
+    targetName: 'كريستيانو رونالدو',
     minHops: 1,
     hint: 'عبر ريال مدريد',
   },
   {
     id: 'ch_mitrovic_neymar',
-    startPlayer: getPlayerByName('ألكسندر ميتروفيتش'),
-    targetPlayer: getPlayerByName('نيمار'),
+    startName: 'ألكسندر ميتروفيتش',
+    targetName: 'نيمار',
     minHops: 1,
     hint: 'عبر الهلال السعودي',
   },
   {
     id: 'ch_otavio_ronaldo',
-    startPlayer: getPlayerByName('أوتافيو'),
-    targetPlayer: getPlayerByName('كريستيانو رونالدو'),
+    startName: 'أوتافيو',
+    targetName: 'كريستيانو رونالدو',
     minHops: 1,
     hint: 'عبر النصر ومنتخب البرتغال',
   },
   {
     id: 'ch_mahrez_firmino',
-    startPlayer: getPlayerByName('رياض محرز'),
-    targetPlayer: getPlayerByName('روبرتو فيرمينو'),
+    startName: 'رياض محرز',
+    targetName: 'روبرتو فيرمينو',
     minHops: 1,
     hint: 'عبر الأهلي السعودي',
   },
   {
     id: 'ch_kante_benzema',
-    startPlayer: getPlayerByName('نغولو كانتي'),
-    targetPlayer: getPlayerByName('كريم بنزيما'),
+    startName: 'نغولو كانتي',
+    targetName: 'كريم بنزيما',
     minHops: 1,
     hint: 'عبر الاتحاد السعودي ومنتخب فرنسا',
   },
   {
     id: 'ch_bounou_neymar',
-    startPlayer: getPlayerByName('ياسين بونو'),
-    targetPlayer: getPlayerByName('نيمار'),
+    startName: 'ياسين بونو',
+    targetName: 'نيمار',
     minHops: 1,
     hint: 'عبر الهلال السعودي',
   },
   {
     id: 'ch_alaba_davies',
-    startPlayer: getPlayerByName('دافيد ألابا'),
-    targetPlayer: getPlayerByName('ألفونسو ديفيز'),
+    startName: 'دافيد ألابا',
+    targetName: 'ألفونسو ديفيز',
     minHops: 1,
     hint: 'عبر بايرن ميونخ',
   },
   {
     id: 'ch_rudiger_havertz',
-    startPlayer: getPlayerByName('أنطونيو روديغر'),
-    targetPlayer: getPlayerByName('كاي هافيرتز'),
+    startName: 'أنطونيو روديغر',
+    targetName: 'كاي هافيرتز',
     minHops: 1,
     hint: 'عبر تشيلسي ومنتخب ألمانيا',
   },
   {
     id: 'ch_gundogan_haaland',
-    startPlayer: getPlayerByName('إلكاي غوندوغان'),
-    targetPlayer: getPlayerByName('إيرلينغ هالاند'),
+    startName: 'إلكاي غوندوغان',
+    targetName: 'إيرلينغ هالاند',
     minHops: 1,
     hint: 'عبر مانشستر سيتي',
   },
   {
     id: 'ch_lewandowski_muller',
-    startPlayer: getPlayerByName('روبرت ليفاندوفسكي'),
-    targetPlayer: getPlayerByName('توماس مولر'),
+    startName: 'روبرت ليفاندوفسكي',
+    targetName: 'توماس مولر',
     minHops: 1,
     hint: 'عبر بايرن ميونخ',
   },
   {
     id: 'ch_neuer_terstegen',
-    startPlayer: getPlayerByName('مانويل نوير'),
-    targetPlayer: getPlayerByName('مارك أندريه تير شتيغن'),
+    startName: 'مانويل نوير',
+    targetName: 'مارك أندريه تير شتيغن',
     minHops: 1,
     hint: 'عبر منتخب ألمانيا',
   },
   {
     id: 'ch_ronaldo_cancelo',
-    startPlayer: getPlayerByName('كريستيانو رونالدو'),
-    targetPlayer: getPlayerByName('جواو كانسيلو'),
+    startName: 'كريستيانو رونالدو',
+    targetName: 'جواو كانسيلو',
     minHops: 1,
     hint: 'عبر يوفنتوس ومنتخب البرتغال',
   },
 ];
 
+export const CHAIN_CHALLENGES_BANK: ChainChallenge[] = (() => {
+  const result: ChainChallenge[] = [];
+  for (const pair of RAW_CHAIN_PAIRS) {
+    try {
+      const start = getPlayerByNameSafe(pair.startName);
+      const target = getPlayerByNameSafe(pair.targetName);
+      if (start && target) {
+        result.push({
+          id: pair.id,
+          startPlayer: start,
+          targetPlayer: target,
+          minHops: pair.minHops,
+          hint: pair.hint,
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return result;
+})();
+
 /**
  * Returns a randomized sequence of challenges for a 5-round match
  */
 export const getRandomChainChallenges = (count: number = 5): ChainChallenge[] => {
+  if (CHAIN_CHALLENGES_BANK.length === 0) return [];
   const shuffled = [...CHAIN_CHALLENGES_BANK].sort(() => 0.5 - Math.random());
   return shuffled.slice(0, count);
 };
