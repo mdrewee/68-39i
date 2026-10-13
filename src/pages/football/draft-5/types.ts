@@ -29,6 +29,22 @@ export const DRAFT_SLOTS_ORDER: DraftPosition[] = [
   'GK',
 ];
 
+// Alias for backwards compatibility / round-based slot mappings
+export const DRAFT_ROUND_POSITIONS: DraftPosition[] = DRAFT_SLOTS_ORDER;
+
+// Calculate round pick queue using Round-Robin rotation
+export const getRoundPickOrder = (
+  players: { id: string; name: string }[],
+  roundNumber: number // 1 to 5
+): { id: string; name: string }[] => {
+  if (!players || players.length === 0) return [];
+  const shiftIndex = (roundNumber - 1) % players.length;
+  return [
+    ...players.slice(shiftIndex),
+    ...players.slice(0, shiftIndex),
+  ];
+};
+
 export type DraftPhase = 'LOBBY' | 'DRAFTING' | 'AI_REVEAL' | 'MATCH_OVER';
 
 export interface PlayerSquadSlot {

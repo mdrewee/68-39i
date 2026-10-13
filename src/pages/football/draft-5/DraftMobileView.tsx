@@ -97,10 +97,14 @@ export const DraftMobileView: FC = () => {
   useEffect(() => { myConditionsRef.current = myConditions; }, [myConditions]);
 
   const isMyTurn = currentPickerId === playerId;
+  const isSubscribedRef = useRef<boolean>(false);
 
-  // Realtime Broadcast helper
+  // Realtime Broadcast helper (Guarded against early invocation before SUBSCRIBED)
   const broadcastEvent = useCallback((payload: DraftEventPayload) => {
-    if (!channelRef.current) return;
+    if (!channelRef.current || !isSubscribedRef.current) {
+      console.warn('[Realtime Mobile] Cannot send event - channel not SUBSCRIBED yet:', payload.action);
+      return;
+    }
     channelRef.current.send({
       type: 'broadcast',
       event: 'draft_event',
@@ -297,10 +301,11 @@ export const DraftMobileView: FC = () => {
     handleConfirmPick(customPlayer);
   };
 
-  // Supabase Channel
+  // Supabase Channel (Strict lifecycle tied ONLY to roomCode and playerId)
   useEffect(() => {
-    if (!roomCode) return;
+    if (!roomCode || !playerId) return;
 
+    let isMounted = true;
     const channelId = `draft5:${roomCode}`;
 
     const channel = supabase.channel(channelId, {
@@ -313,7 +318,7 @@ export const DraftMobileView: FC = () => {
     channel
       .on('presence', { event: 'sync' }, () => {})
       .on('broadcast', { event: 'draft_event' }, ({ payload }) => {
-        if (!payload) return;
+        if (!isMounted || !payload) return;
         const ev = payload as DraftEventPayload;
 
         if (ev.action === 'GAME_START') {
@@ -423,29 +428,37 @@ export const DraftMobileView: FC = () => {
         }
       })
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED' && hasJoinedRef.current) {
-          const clubToTrack = selectedClubRef.current || DRAFT_CURATED_CLUBS[0];
-          channel.track({
-            id: playerIdRef.current,
-            name: playerNameRef.current,
-            teamId: clubToTrack.id,
-            teamName: clubToTrack.name,
-            teamLogo: clubToTrack.badgeUrl,
-            selectedClub: clubToTrack,
-            joinedAt: Date.now(),
-            isReady: false,
-          });
+        if (!isMounted) return;
+        if (status === 'SUBSCRIBED') {
+          isSubscribedRef.current = true;
+          if (hasJoinedRef.current) {
+            const clubToTrack = selectedClubRef.current || DRAFT_CURATED_CLUBS[0];
+            channel.track({
+              id: playerIdRef.current,
+              name: playerNameRef.current,
+              teamId: clubToTrack.id,
+              teamName: clubToTrack.name,
+              teamLogo: clubToTrack.badgeUrl,
+              selectedClub: clubToTrack,
+              joinedAt: Date.now(),
+              isReady: false,
+            });
+          }
+        } else {
+          isSubscribedRef.current = false;
         }
       });
 
     channelRef.current = channel;
 
     return () => {
+      isMounted = false;
+      isSubscribedRef.current = false;
       channel.untrack();
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [roomCode, playerId, round, navigate, broadcastEvent]);
+  }, [roomCode, playerId, navigate, broadcastEvent]);
 
   // Join Screen: Plain Brutalist input + Embedded Team Logo Preview & Selector
   if (!hasJoined) {

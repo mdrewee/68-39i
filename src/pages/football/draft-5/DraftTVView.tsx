@@ -93,9 +93,14 @@ export const DraftTVView: FC = () => {
   useEffect(() => { activeConditionRef.current = activeCondition; }, [activeCondition]);
   useEffect(() => { usedConditionsRef.current = usedConditions; }, [usedConditions]);
 
-  // Broadcast to all clients
+  const isSubscribedRef = useRef<boolean>(false);
+
+  // Broadcast to all clients (Guarded against calling .send() before SUBSCRIBED)
   const broadcastEvent = useCallback((payload: DraftEventPayload) => {
-    if (!channelRef.current) return;
+    if (!channelRef.current || !isSubscribedRef.current) {
+      console.warn('[Realtime TV] Cannot send event - channel not SUBSCRIBED yet:', payload.action);
+      return;
+    }
     channelRef.current.send({
       type: 'broadcast',
       event: 'draft_event',
@@ -609,18 +614,22 @@ export const DraftTVView: FC = () => {
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
+          isSubscribedRef.current = true;
           channel.track({
             id: 'host_tv',
             name: 'شاشة العرض',
             role: 'tv',
             joinedAt: Date.now(),
           });
+        } else {
+          isSubscribedRef.current = false;
         }
       });
 
     channelRef.current = channel;
 
     return () => {
+      isSubscribedRef.current = false;
       channel.untrack();
       supabase.removeChannel(channel);
       channelRef.current = null;

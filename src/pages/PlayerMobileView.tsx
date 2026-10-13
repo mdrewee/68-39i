@@ -70,10 +70,7 @@ export const PlayerMobileView: React.FC = () => {
     const cleanCode = (roomCode || '').trim().toUpperCase();
     if (!cleanCode || !playerId) return;
 
-    // Prevent multiple executions in StrictMode or re-render loops
-    if (isSubscribedRef.current) return;
-    isSubscribedRef.current = true;
-
+    let isMounted = true;
     console.log(`[STABLE MOUNT] Starting single connection for room: "${cleanCode}" | Player: "${playerId}"`);
 
     // Clean up any existing channel with matching topic from Supabase client cache
@@ -98,6 +95,7 @@ export const PlayerMobileView: React.FC = () => {
         }
       })
       .on('presence', { event: 'sync' }, () => {
+        if (!isMounted) return;
         try {
           const state = channel.presenceState();
           const allPresences = Object.values(state).flat() as any[];
@@ -116,7 +114,7 @@ export const PlayerMobileView: React.FC = () => {
         }
       })
       .on('broadcast', { event: 'PLAYER_READY_UPDATE' }, ({ payload }) => {
-        if (!payload || !payload.playerId) return;
+        if (!isMounted || !payload || !payload.playerId) return;
         roomBus.emit('PLAYER_READY_UPDATE', cleanCode, payload);
         const r = roomBus.getRoom(cleanCode);
         if (r) {
@@ -134,74 +132,75 @@ export const PlayerMobileView: React.FC = () => {
         }
       })
       .on('broadcast', { event: 'PLAYER_SUBMISSION' }, ({ payload }) => {
-        if (!payload || !payload.playerId) return;
+        if (!isMounted || !payload || !payload.playerId) return;
         roomBus.emit('PLAYER_SUBMISSION', cleanCode, payload);
       })
       .on('broadcast', { event: 'ROUND_STARTED' }, ({ payload }) => {
+        if (!isMounted) return;
         roomBus.emit('ROUND_STARTED', cleanCode, payload);
       })
       .on('broadcast', { event: 'SCATTERGORIES_SUBMIT' }, ({ payload }) => {
-        if (payload) roomBus.emit('SCATTERGORIES_SUBMIT', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('SCATTERGORIES_SUBMIT', cleanCode, payload);
       })
       .on('broadcast', { event: 'SCATTERGORIES_GRACE' }, ({ payload }) => {
-        if (payload) roomBus.emit('SCATTERGORIES_GRACE', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('SCATTERGORIES_GRACE', cleanCode, payload);
       })
       .on('broadcast', { event: 'SCATTERGORIES_RESULTS' }, ({ payload }) => {
-        if (payload) roomBus.emit('SCATTERGORIES_RESULTS', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('SCATTERGORIES_RESULTS', cleanCode, payload);
       })
       .on('broadcast', { event: 'WORDLE_GUESS' }, ({ payload }) => {
-        if (payload) roomBus.emit('WORDLE_GUESS', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('WORDLE_GUESS', cleanCode, payload);
       })
       .on('broadcast', { event: 'PLAYER_SOLVED_WORDLE' }, ({ payload }) => {
-        if (payload) roomBus.emit('PLAYER_SOLVED_WORDLE', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('PLAYER_SOLVED_WORDLE', cleanCode, payload);
       })
       .on('broadcast', { event: 'WORDLE_GRACE' }, ({ payload }) => {
-        if (payload) roomBus.emit('WORDLE_GRACE', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('WORDLE_GRACE', cleanCode, payload);
       })
       .on('broadcast', { event: 'WORDLE_ROUND_ENDED' }, ({ payload }) => {
-        if (payload) roomBus.emit('WORDLE_ROUND_ENDED', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('WORDLE_ROUND_ENDED', cleanCode, payload);
       })
       .on('broadcast', { event: 'CLAIM_WORD' }, ({ payload }) => {
-        if (payload) roomBus.emit('CLAIM_WORD', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('CLAIM_WORD', cleanCode, payload);
       })
       .on('broadcast', { event: 'WORD_CLAIMED' }, ({ payload }) => {
-        if (payload) roomBus.emit('WORD_CLAIMED', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('WORD_CLAIMED', cleanCode, payload);
       })
       .on('broadcast', { event: 'WORD_CLAIM_REJECTED' }, ({ payload }) => {
-        if (payload) roomBus.emit('WORD_CLAIM_REJECTED', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('WORD_CLAIM_REJECTED', cleanCode, payload);
       })
       .on('broadcast', { event: 'PENTAGON_ROUND_ENDED' }, ({ payload }) => {
-        if (payload) roomBus.emit('PENTAGON_ROUND_ENDED', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('PENTAGON_ROUND_ENDED', cleanCode, payload);
       })
       .on('broadcast', { event: 'LETTER_ROULETTE_STARTED' }, ({ payload }) => {
-        if (payload) roomBus.emit('LETTER_ROULETTE_STARTED', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('LETTER_ROULETTE_STARTED', cleanCode, payload);
       })
       .on('broadcast', { event: 'ADMIN_CLAIMED' }, ({ payload }) => {
-        if (payload) roomBus.emit('ADMIN_CLAIMED', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('ADMIN_CLAIMED', cleanCode, payload);
       })
       .on('broadcast', { event: 'ROUND_STOPPED_BY_PLAYER' }, ({ payload }) => {
-        if (payload) roomBus.emit('ROUND_STOPPED_BY_PLAYER', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('ROUND_STOPPED_BY_PLAYER', cleanCode, payload);
       })
       .on('broadcast', { event: 'WORDLE_ROUND_WON' }, ({ payload }) => {
-        if (payload) roomBus.emit('WORDLE_ROUND_WON', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('WORDLE_ROUND_WON', cleanCode, payload);
       })
       .on('broadcast', { event: 'WORDLE_ALL_LOST' }, ({ payload }) => {
-        if (payload) roomBus.emit('WORDLE_ALL_LOST', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('WORDLE_ALL_LOST', cleanCode, payload);
       })
       .on('broadcast', { event: 'RETURN_TO_LOBBY' }, ({ payload }) => {
-        roomBus.emit('RETURN_TO_LOBBY', cleanCode, payload);
+        if (isMounted) roomBus.emit('RETURN_TO_LOBBY', cleanCode, payload);
       })
       .on('broadcast', { event: 'ADMIN_REQUEST_SUBMITTED' }, ({ payload }) => {
-        if (payload) roomBus.emit('ADMIN_REQUEST_SUBMITTED', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('ADMIN_REQUEST_SUBMITTED', cleanCode, payload);
       })
       .on('broadcast', { event: 'ADMIN_REQUEST_RESOLVED' }, ({ payload }) => {
-        if (payload) roomBus.emit('ADMIN_REQUEST_RESOLVED', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('ADMIN_REQUEST_RESOLVED', cleanCode, payload);
       })
       .on('broadcast', { event: 'ADMIN_ADVANCE_NEXT_ROUND' }, ({ payload }) => {
-        if (payload) roomBus.emit('ADMIN_ADVANCE_NEXT_ROUND', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('ADMIN_ADVANCE_NEXT_ROUND', cleanCode, payload);
       })
       .on('broadcast', { event: 'SCATTERGORIES_ADMIN_VETO' }, ({ payload }) => {
-        if (payload) roomBus.emit('SCATTERGORIES_ADMIN_VETO', cleanCode, payload);
+        if (isMounted && payload) roomBus.emit('SCATTERGORIES_ADMIN_VETO', cleanCode, payload);
       })
       .on('broadcast', { event: 'GAME_TERMINATED' }, () => {
         sessionStorage.removeItem('taq_session_player_id');
@@ -240,22 +239,25 @@ export const PlayerMobileView: React.FC = () => {
         }
       })
       .on('broadcast', { event: 'room_event' }, ({ payload }) => {
+        if (!isMounted) return;
         if (payload?.type === 'STATE_UPDATED' && payload.data) {
           roomBus.writeLocal(payload.data);
           roomBus.dispatchLocal(payload);
         }
       })
       .subscribe(async (status) => {
+        if (!isMounted) return;
         console.log(`[CHANNEL STATUS]: ${status}`);
         if (status === 'SUBSCRIBED') {
+          isSubscribedRef.current = true;
           console.log('[Mobile] Subscribed, requesting current room state...');
-          await channel.track({
-            id: playerId,
-            name: playerName,
-            isReady: false,
-            joinedAt: Date.now(),
-          });
           try {
+            await channel.track({
+              id: playerId,
+              name: playerName,
+              isReady: false,
+              joinedAt: Date.now(),
+            });
             channel.send({
               type: 'broadcast',
               event: 'REQUEST_ROOM_STATE',
@@ -279,6 +281,8 @@ export const PlayerMobileView: React.FC = () => {
           } catch (e) {
             console.warn('[Request room state warn]:', e);
           }
+        } else {
+          isSubscribedRef.current = false;
         }
       });
 
@@ -313,6 +317,7 @@ export const PlayerMobileView: React.FC = () => {
     });
 
     return () => {
+      isMounted = false;
       isSubscribedRef.current = false;
       setActiveChannel(null);
       supabase.removeChannel(channel);
