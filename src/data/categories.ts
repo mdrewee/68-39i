@@ -179,6 +179,20 @@ export const CATEGORIES_REGISTRY: CategoryItem[] = [
         route: '/room/:code/football/mutual-link',
         icon: 'Link',
       },
+      {
+        id: 'draft-5',
+        title: 'كوّن فريقك',
+        description: 'ابنِ تشكيلتك الخماسية وفق شروط ومراكز تكتيكية، والـ AI يقيّم التشكيلات ويعلن البطل!',
+        route: '/room/:code/football/draft-5',
+        icon: 'Trophy',
+      },
+      {
+        id: 'football-chain',
+        title: 'سِكّة اللاعبين',
+        description: 'من لاعب البداية إلى لاعب الهدف.. ابنِ أسرع سلسلة ربط بين اللاعبين عبر زملائهم في الأندية والمنتخبات!',
+        route: '/room/:code/football/football-chain',
+        icon: 'Share2',
+      },
     ],
   },
 ];

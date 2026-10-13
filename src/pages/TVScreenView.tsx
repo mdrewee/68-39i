@@ -45,6 +45,7 @@ import { MoveThePuppetTVView } from './eshrah/MoveThePuppet/MoveThePuppetTVView'
 import { FootballBingoTVView } from './football/football-bingo/FootballBingoTVView';
 import { MutualLinkTVView } from './football/mutual-link/MutualLinkTVView';
 import { DraftTVView } from './football/draft-5/DraftTVView';
+import { ChainTVView } from './football/football-chain/ChainTVView';
 import { useSafeCountdown } from '../hooks/useSafeCountdown';
 
 export const TVScreenView: React.FC = () => {
@@ -180,6 +181,12 @@ export const TVScreenView: React.FC = () => {
     path.includes('draft-5')
   ) {
     return <DraftTVView />;
+  }
+  if (
+    activeRoom.selectedGameId === 'football-chain' ||
+    path.includes('football-chain')
+  ) {
+    return <ChainTVView />;
   }
 
   return <ClassicTVScreenView roomId={roomId} />;

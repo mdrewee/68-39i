@@ -122,6 +122,11 @@ export function App() {
         <Route path="/room/:code/football/draft-5-play" element={<PlayerMobileView />} />
         <Route path="/room/:code/football/draft-5-tv" element={<TVScreenView />} />
 
+        {/* Football Suite - Football Chain (سِكّة اللاعبين) */}
+        <Route path="/room/:code/football/football-chain" element={<PlayerMobileView />} />
+        <Route path="/room/:code/football/football-chain-play" element={<PlayerMobileView />} />
+        <Route path="/room/:code/football/football-chain-tv" element={<TVScreenView />} />
+
         {/* Player Join & Mobile Controller View */}
         <Route path="/room/:code/join" element={<MobileJoinPage />} />
         <Route path="/room/:code/play" element={<PlayerMobileView />} />
