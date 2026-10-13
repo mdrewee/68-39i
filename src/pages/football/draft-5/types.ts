@@ -131,6 +131,7 @@ export type DraftAction =
   | 'GAME_START'
   | 'PICK_LOCKED'
   | 'PLAYER_PICKED'
+  | 'PLAYER_LOCKED'
   | 'DRAFT_COMPLETE'
   | 'ROUND_ADVANCE'
   | 'AI_EVALUATION_START'
@@ -154,9 +155,11 @@ export interface DraftEventPayload {
   pickedPosition?: DraftPosition;
   pickedPlayer?: FootballPlayer;
   appliedCondition?: DraftCondition;
-  // Specific payload for PLAYER_PICKED and DRAFT_COMPLETE
+  // Specific payload for PLAYER_PICKED, PLAYER_LOCKED and DRAFT_COMPLETE
   slotKey?: DraftPosition;
   pickedPlayerName?: string;
+  pickerName?: string;
+  lockedPlayerName?: string;
   conditionId?: string;
   conditionTitle?: string;
   teamLogo?: string;

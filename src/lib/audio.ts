@@ -360,6 +360,11 @@ class SoundEngine {
       // ignore
     }
   }
+
+  // Pleasant chime for notifications and locked player alert
+  public playNotification() {
+    this.playPlayerJoin();
+  }
 }
 
 export const sound = new SoundEngine();

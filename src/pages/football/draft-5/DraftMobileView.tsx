@@ -86,6 +86,21 @@ export const DraftMobileView: FC = () => {
   const [query, setQuery] = useState<string>('');
   const [selectedPlayer, setSelectedPlayer] = useState<FootballPlayer | null>(null);
 
+  // Live Toast Notification
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<any>(null);
+
+  const showToast = useCallback((msg: string) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastMessage(msg);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null);
+    }, 3500);
+  }, []);
+
+  // Global Banned Players Map (normalized name -> picker name)
+  const [bannedPlayers, setBannedPlayers] = useState<Record<string, string>>({});
+
   // References
   const channelRef = useRef<RealtimeChannel | null>(null);
   const playerIdRef = useRef<string>(playerId);
@@ -118,13 +133,29 @@ export const DraftMobileView: FC = () => {
     });
   }, []);
 
-  // Filter players with strict Anti-Steal Mechanism
+  // Helper to normalize player names for comparison
+  const normalizePlayerName = (name: string): string => {
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/[إأآا]/g, 'ا')
+      .replace(/[ة]/g, 'ه')
+      .replace(/[ى]/g, 'ي')
+      .replace(/\s+/g, ' ');
+  };
+
+  // Search results from master dataset
   const searchResults = React.useMemo(() => {
     if (!query.trim()) return [];
-    const raw = searchFootballPlayers(query, 12);
-    // Exclude globally drafted players
-    return raw.filter((p) => !draftedPlayerIds.includes(p.id));
-  }, [query, draftedPlayerIds]);
+    return searchFootballPlayers(query, 12);
+  }, [query]);
+
+  // Check if typed query matches any banned player
+  const customQueryBannedPicker = React.useMemo(() => {
+    const qNorm = normalizePlayerName(query);
+    if (!qNorm) return null;
+    return bannedPlayers[qNorm] || null;
+  }, [query, bannedPlayers]);
 
   // Handle Turn Change Sound & Vibration
   useEffect(() => {
@@ -231,11 +262,29 @@ export const DraftMobileView: FC = () => {
     setMyPicks(updatedPicks);
     setMyConditions(updatedConditions);
 
+    // Update local banned map
+    const norm = normalizePlayerName(target.name);
+    setBannedPlayers((prev) => ({
+      ...prev,
+      [norm]: playerName,
+    }));
+
     setSelectedPlayer(null);
     setSelectedSlotKey(null); // Reset active slot gate
     setQuery('');
 
-    // 2. Broadcast PLAYER_PICKED & PICK_LOCKED to TV
+    // 2. Broadcast PLAYER_LOCKED and PLAYER_PICKED
+    broadcastEvent({
+      action: 'PLAYER_LOCKED',
+      pickerName: playerName,
+      lockedPlayerName: target.name,
+      pickedPlayerName: target.name,
+      slotKey: slotAssigned,
+      conditionTitle: currentCond?.title || '',
+      playerId,
+      playerName,
+    });
+
     broadcastEvent({
       action: 'PLAYER_PICKED',
       playerId,
@@ -364,11 +413,28 @@ export const DraftMobileView: FC = () => {
           setQuery('');
           setSelectedPlayer(null);
           if (ev.draftedPlayerIds) setDraftedPlayerIds(ev.draftedPlayerIds);
-        } else if (ev.action === 'PICK_LOCKED' || ev.action === 'PLAYER_PICKED') {
+        } else if (ev.action === 'PLAYER_LOCKED' || ev.action === 'PLAYER_PICKED' || ev.action === 'PICK_LOCKED') {
           if (ev.draftedPlayerIds) setDraftedPlayerIds(ev.draftedPlayerIds);
           if (ev.currentPickerId) {
             setCurrentPickerId(ev.currentPickerId);
             setCurrentPickerName(ev.currentPickerName || '');
+          }
+
+          const targetName = ev.lockedPlayerName || ev.pickedPlayerName;
+          const picker = ev.pickerName || ev.playerName || 'متسابق';
+
+          if (targetName) {
+            const norm = normalizePlayerName(targetName);
+            setBannedPlayers((prev) => ({
+              ...prev,
+              [norm]: picker,
+            }));
+
+            // If another player picked this player, show live toast
+            if (ev.playerId !== playerIdRef.current) {
+              sound.playNotification();
+              showToast(`قام ${picker} باختيار ${targetName}!`);
+            }
           }
         } else if (ev.action === 'DRAFT_FINISHED') {
           // TV broadcasted that drafting is completed: push final completed squad immediately
@@ -559,6 +625,16 @@ export const DraftMobileView: FC = () => {
       className="min-h-screen w-full bg-[#E5E0D5] text-[#2C2A29] flex flex-col font-sans select-none overflow-x-hidden"
       dir="rtl"
     >
+      {/* Live Toast Notification for Locked Player */}
+      {toastMessage && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 animate-bounce max-w-[90%] w-auto">
+          <div className="bg-[#2C2A29] text-[#F7F4EC] border-2 border-[#E5E0D5] py-2 px-4 rounded-xl font-black text-xs sm:text-sm shadow-[3px_3px_0px_#C68B59] flex items-center gap-2">
+            <span>🔔</span>
+            <span>{toastMessage}</span>
+          </div>
+        </div>
+      )}
+
       {/* Top Mobile Bar */}
       <header className="w-full bg-[#E5E0D5] border-b-2 border-[#2C2A29] px-4 py-2.5 flex items-center justify-between shadow-sm shrink-0">
         <div className="flex items-center gap-2">
@@ -751,12 +827,35 @@ export const DraftMobileView: FC = () => {
                 />
               </div>
 
-              {/* Clean Autocomplete Dropdown List */}
+              {/* Clean Autocomplete Dropdown List with Banned Styling */}
               {selectedSlotKey && query.trim() && isMyTurn && (
-                <div className="max-h-40 overflow-y-auto border-2 border-[#2C2A29] rounded-xl bg-white divide-y divide-[#2C2A29]/10 shadow-[3px_3px_0px_#2C2A29]">
+                <div className="max-h-48 overflow-y-auto border-2 border-[#2C2A29] rounded-xl bg-white divide-y divide-[#2C2A29]/10 shadow-[3px_3px_0px_#2C2A29]">
                   {searchResults.length > 0 ? (
                     searchResults.map((p) => {
                       const isTarget = selectedPlayer?.id === p.id;
+                      const norm = normalizePlayerName(p.name);
+                      const isBanned = Boolean(bannedPlayers[norm] || draftedPlayerIds.includes(p.id));
+                      const pickedBy = bannedPlayers[norm] || 'متسابق آخر';
+
+                      if (isBanned) {
+                        return (
+                          <div
+                            key={p.id}
+                            className="p-2.5 flex items-center justify-between text-xs opacity-60 bg-[#E5E0D5] cursor-not-allowed select-none border-b border-[#2C2A29]/10"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="line-through text-[#2C2A29] font-bold">{p.name}</span>
+                              <span className="bg-[#C68B59] text-white text-[10px] font-black px-2 py-0.5 rounded border border-[#2C2A29]">
+                                ممنوع - تم اختياره من {pickedBy}
+                              </span>
+                            </div>
+                            <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-black/10">
+                              {p.position}
+                            </span>
+                          </div>
+                        );
+                      }
+
                       return (
                         <div
                           key={p.id}
@@ -786,39 +885,71 @@ export const DraftMobileView: FC = () => {
                       <p className="text-xs font-bold text-[#5C4033]">
                         لم يتم العثور على اللاعب في قاعدة البيانات.
                       </p>
-                      <button
-                        type="button"
-                        onClick={handlePinCustomPlayer}
-                        className="w-full bg-[#C68B59] hover:bg-[#B57A48] text-white text-xs font-black py-2 px-3 rounded-lg border border-[#2C2A29] flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
-                      >
-                        <Pin size={14} />
-                        <span>تثبيت "{query.trim()}" كاختيار يدوي</span>
-                      </button>
+                      {customQueryBannedPicker ? (
+                        <div className="bg-[#E5E0D5] border border-[#C68B59] rounded-lg p-2 text-xs font-black text-[#5C4033]">
+                          ⚠️ هذا اللاعب تم اختياره مسبقاً من قبل ({customQueryBannedPicker}) ولا يمكن تثبيته!
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handlePinCustomPlayer}
+                          className="w-full bg-[#C68B59] hover:bg-[#B57A48] text-white text-xs font-black py-2 px-3 rounded-lg border border-[#2C2A29] flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <Pin size={14} />
+                          <span>تثبيت "{query.trim()}" كاختيار يدوي</span>
+                        </button>
+                      )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Warning if typed name is banned */}
+              {customQueryBannedPicker && (
+                <div className="bg-[#E5E0D5] border-2 border-[#C68B59] rounded-xl p-2.5 text-center text-xs font-black text-[#2C2A29]">
+                  ⚠️ هذا اللاعب تم اختياره مسبقاً من قبل ({customQueryBannedPicker}) ولا يمكن تثبيته!
                 </div>
               )}
 
               {/* Confirm Lock-In Button (Ochre Orange bg-[#C68B59]) */}
               <button
                 type="button"
-                disabled={!isMyTurn || !selectedSlotKey || (!selectedPlayer && !query.trim())}
+                disabled={
+                  !isMyTurn ||
+                  !selectedSlotKey ||
+                  Boolean(customQueryBannedPicker) ||
+                  (Boolean(selectedPlayer) && Boolean(bannedPlayers[normalizePlayerName(selectedPlayer!.name)])) ||
+                  (!selectedPlayer && !query.trim())
+                }
                 onClick={() => {
                   if (selectedPlayer) {
+                    if (bannedPlayers[normalizePlayerName(selectedPlayer.name)]) {
+                      alert('هذا اللاعب تم اختياره مسبقاً ولا يمكن تثبيته!');
+                      return;
+                    }
                     handleConfirmPick(selectedPlayer);
                   } else if (query.trim()) {
+                    if (customQueryBannedPicker) {
+                      alert('هذا اللاعب تم اختياره مسبقاً ولا يمكن تثبيته!');
+                      return;
+                    }
                     handlePinCustomPlayer();
                   }
                 }}
                 className={`w-full py-3 rounded-xl font-black text-sm border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all flex items-center justify-center gap-2 ${
-                  isMyTurn && selectedSlotKey && (selectedPlayer || query.trim())
+                  isMyTurn &&
+                  selectedSlotKey &&
+                  !customQueryBannedPicker &&
+                  (selectedPlayer ? !bannedPlayers[normalizePlayerName(selectedPlayer.name)] : query.trim())
                     ? 'bg-[#C68B59] hover:bg-[#B57A48] text-[#F7F4EC] cursor-pointer'
                     : 'bg-[#D5CFC5] text-[#5C4033] opacity-60 cursor-not-allowed'
                 }`}
               >
                 <Trophy size={16} />
                 <span>
-                  {selectedPlayer
+                  {customQueryBannedPicker
+                    ? `ممنوع - تم اختياره من ${customQueryBannedPicker}`
+                    : selectedPlayer
                     ? `تثبيت ${selectedPlayer.name} في ${DRAFT_POSITION_SHORT_NAMES_MAP[selectedSlotKey || 'FWD']}`
                     : query.trim() && selectedSlotKey
                     ? `تثبيت "${query.trim()}" يدوياً`

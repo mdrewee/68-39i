@@ -73,6 +73,18 @@ export const DraftTVView: FC = () => {
   // Cumulative Wins across the 5 rounds
   const [roundWins, setRoundWins] = useState<Record<string, number>>({});
 
+  // Live Toast Notification on TV
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<any>(null);
+
+  const showToast = useCallback((msg: string) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastMessage(msg);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null);
+    }, 3500);
+  }, []);
+
   // References
   const channelRef = useRef<RealtimeChannel | null>(null);
   const phaseRef = useRef<DraftPhase>(phase);
@@ -523,6 +535,13 @@ export const DraftTVView: FC = () => {
           setContestants((prev) =>
             prev.map((p) => (p.id === ev.playerId ? { ...p, readyForNextRound: Boolean(ev.isReady) } : p))
           );
+        } else if (ev.action === 'PLAYER_LOCKED') {
+          const targetName = ev.lockedPlayerName || ev.pickedPlayerName;
+          const picker = ev.pickerName || ev.playerName || 'متسابق';
+          if (targetName) {
+            sound.playNotification();
+            showToast(`قام ${picker} باختيار ${targetName}!`);
+          }
         } else if (ev.action === 'PLAYER_PICKED' || ev.action === 'PICK_LOCKED') {
           if (ev.playerId && ev.slotKey && ev.pickedPlayerName) {
             const pId = ev.playerId;
@@ -650,9 +669,19 @@ export const DraftTVView: FC = () => {
 
   return (
     <div
-      className="min-h-screen w-full bg-[#E5E0D5] text-[#2C2A29] flex flex-col font-sans select-none overflow-x-hidden"
+      className="min-h-screen w-full bg-[#E5E0D5] text-[#2C2A29] flex flex-col font-sans select-none overflow-x-hidden relative"
       dir="rtl"
     >
+      {/* Live Toast Notification on TV */}
+      {toastMessage && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 animate-bounce">
+          <div className="bg-[#2C2A29] text-[#F7F4EC] border-2 border-[#E5E0D5] py-2.5 px-6 rounded-2xl font-black text-lg shadow-[4px_4px_0px_#C68B59] flex items-center gap-3">
+            <span className="text-xl">🔔</span>
+            <span>{toastMessage}</span>
+          </div>
+        </div>
+      )}
+
       <DraftTopBar
         title="كوّن فريقك 5"
         roomCode={roomCode}
@@ -1008,30 +1037,37 @@ export const DraftTVView: FC = () => {
                               const p = picks ? picks[pos] : null;
                               const ver = ev.conditionVerifications.find((v) => v.position === pos);
                               const isValid = ver?.isValid ?? false;
+                              const playerName = p?.name || squadBackup?.slots?.[pos]?.playerName || ver?.playerName || 'لم يحدد';
+                              const condTitle = ver?.conditionTitle || squadBackup?.slots?.[pos]?.conditionTitle || contestant?.pickConditions?.[pos]?.title || 'شرط الجولة';
+                              const reasonText = ver?.reason || (isValid ? 'حقق الشرط المطلوب بنجاح.' : 'لم يتم استيفاء معايير الشرط.');
 
                               return (
                                 <div
                                   key={pos}
-                                  className={`p-2 rounded-xl border text-xs space-y-0.5 ${
-                                    isValid
-                                      ? 'bg-[#E5E0D5] border-[#8A9A5B]'
-                                      : 'bg-[#F2DEDE] border-[#C68B59]'
-                                  }`}
+                                  className="bg-[#E5E0D5] border-2 border-[#2C2A29] p-2.5 rounded-xl mb-2 text-right shadow-sm"
                                 >
-                                  <div className="flex items-center justify-between font-black">
-                                    <span className="text-[#2C2A29]">
-                                      {DRAFT_POSITION_SHORT_NAMES[pos]}: {p?.name || squadBackup?.slots?.[pos]?.playerName || ver?.playerName || 'فارغ'}
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-black text-xs text-[#2C2A29]/70">
+                                      {DRAFT_POSITION_SHORT_NAMES[pos]}
                                     </span>
-                                    <span className={`flex items-center gap-1 font-bold ${isValid ? 'text-[#8A9A5B]' : 'text-[#C68B59]'}`}>
-                                      {isValid ? <CheckCircle size={14} /> : <XCircle size={14} />}
-                                      <span>{isValid ? 'مطابق ✓' : 'خطأ ✗'}</span>
+                                    <span
+                                      className={`text-xs font-black px-2 py-0.5 rounded border border-[#2C2A29] ${
+                                        isValid ? 'bg-[#8A9A5B] text-white' : 'bg-[#C68B59] text-white'
+                                      }`}
+                                    >
+                                      {isValid ? '✓ مطابق للشرط' : '✗ غير مطابق'}
                                     </span>
                                   </div>
-                                  {ver?.reason && (
-                                    <span className={`text-[10px] font-bold block ${isValid ? 'text-[#5C4033]' : 'text-[#C68B59]'}`}>
-                                      {ver.reason}
-                                    </span>
-                                  )}
+                                  <div className="font-black text-sm text-[#2C2A29] mt-1">
+                                    {playerName}
+                                  </div>
+                                  <div className="text-[11px] font-bold text-[#2C2A29]/80 mt-0.5">
+                                    الشرط: {condTitle}
+                                  </div>
+                                  {/* Explicit Reason / Error Callout */}
+                                  <div className="text-[11px] font-bold text-[#2C2A29] mt-1 bg-[#F7F4EC] p-1.5 rounded border border-[#2C2A29]/40">
+                                    {reasonText}
+                                  </div>
                                 </div>
                               );
                             })}
