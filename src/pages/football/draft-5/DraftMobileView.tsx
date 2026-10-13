@@ -30,12 +30,15 @@ export const DraftMobileView: FC = () => {
   const [playerName, setPlayerName] = useState<string>(() => {
     return sessionStorage.getItem('draft_player_name') || '';
   });
-  const [selectedClub, setSelectedClub] = useState<DraftClub | null>(() => {
+  const [selectedClub, setSelectedClub] = useState<DraftClub>(() => {
     const cached = sessionStorage.getItem('draft_player_club');
     if (cached) {
-      try { return JSON.parse(cached); } catch { return null; }
+      try { 
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.name && parsed.badgeUrl) return parsed;
+      } catch {}
     }
-    return DRAFT_CURATED_CLUBS[0]; // Default: Al-Hilal
+    return DRAFT_CURATED_CLUBS[0]; // Guaranteed Default: Al-Hilal
   });
 
   const [hasJoined, setHasJoined] = useState<boolean>(() => {
@@ -81,7 +84,7 @@ export const DraftMobileView: FC = () => {
   const channelRef = useRef<RealtimeChannel | null>(null);
   const playerIdRef = useRef<string>(playerId);
   const playerNameRef = useRef<string>(playerName);
-  const selectedClubRef = useRef<DraftClub | null>(selectedClub);
+  const selectedClubRef = useRef<DraftClub>(selectedClub);
   const hasJoinedRef = useRef<boolean>(hasJoined);
   const myPicksRef = useRef<Record<DraftPosition, FootballPlayer | null>>(myPicks);
   const myConditionsRef = useRef<Record<DraftPosition, DraftCondition | null>>(myConditions);
@@ -125,16 +128,20 @@ export const DraftMobileView: FC = () => {
     }
   }, [isMyTurn, phase]);
 
-  // Join Room
-  const handleJoin = (e: React.FormEvent) => {
-    e.preventDefault();
+  // Join Room - Bulletproof with automatic fallback
+  const handleJoin = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     const cleanName = playerName.trim();
-    if (!cleanName || !selectedClub) return;
+    if (!cleanName) return;
+
+    // Bulletproof Fallback: if no club selected, automatically assign default (Al-Hilal)
+    const finalClub = selectedClub || DRAFT_CURATED_CLUBS[0];
+    setSelectedClub(finalClub);
 
     sound.playClick();
     sessionStorage.setItem('draft_player_id', playerId);
     sessionStorage.setItem('draft_player_name', cleanName);
-    sessionStorage.setItem('draft_player_club', JSON.stringify(selectedClub));
+    sessionStorage.setItem('draft_player_club', JSON.stringify(finalClub));
     sessionStorage.setItem('draft_room', roomCode);
     setHasJoined(true);
 
@@ -142,9 +149,51 @@ export const DraftMobileView: FC = () => {
       channelRef.current.track({
         id: playerId,
         name: cleanName,
-        selectedClub,
+        teamId: finalClub.id,
+        teamName: finalClub.name,
+        teamLogo: finalClub.badgeUrl,
+        selectedClub: finalClub,
         joinedAt: Date.now(),
         isReady: false,
+      });
+
+      // Broadcast join event for instant TV sync
+      broadcastEvent({
+        action: 'PLAYER_READY',
+        playerId,
+        playerName: cleanName,
+        selectedClub: finalClub,
+        teamLogo: finalClub.badgeUrl,
+        isReady: false,
+      });
+    }
+  };
+
+  // Change club dynamically (even from lobby)
+  const handleSelectClub = (club: DraftClub) => {
+    setSelectedClub(club);
+    sessionStorage.setItem('draft_player_club', JSON.stringify(club));
+    setIsClubModalOpen(false);
+
+    if (hasJoinedRef.current && channelRef.current) {
+      channelRef.current.track({
+        id: playerIdRef.current,
+        name: playerNameRef.current,
+        teamId: club.id,
+        teamName: club.name,
+        teamLogo: club.badgeUrl,
+        selectedClub: club,
+        joinedAt: Date.now(),
+        isReady,
+      });
+
+      broadcastEvent({
+        action: 'PLAYER_READY',
+        playerId: playerIdRef.current,
+        playerName: playerNameRef.current,
+        selectedClub: club,
+        teamLogo: club.badgeUrl,
+        isReady,
       });
     }
   };
@@ -342,10 +391,14 @@ export const DraftMobileView: FC = () => {
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED' && hasJoinedRef.current) {
+          const clubToTrack = selectedClubRef.current || DRAFT_CURATED_CLUBS[0];
           channel.track({
             id: playerIdRef.current,
             name: playerNameRef.current,
-            selectedClub: selectedClubRef.current,
+            teamId: clubToTrack.id,
+            teamName: clubToTrack.name,
+            teamLogo: clubToTrack.badgeUrl,
+            selectedClub: clubToTrack,
             joinedAt: Date.now(),
             isReady: false,
           });
@@ -359,17 +412,21 @@ export const DraftMobileView: FC = () => {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [roomCode, playerId, round, navigate]);
+  }, [roomCode, playerId, round, navigate, broadcastEvent]);
 
-  // Join Screen: Plain Brutalist input + Curated Team Logo Picker
+  // Join Screen: Plain Brutalist input + Embedded Team Logo Preview & Selector
   if (!hasJoined) {
     return (
       <div
         className="min-h-screen w-full bg-[#E5E0D5] text-[#2C2A29] flex flex-col justify-center items-center p-4 font-sans select-none"
         dir="rtl"
       >
-        <div className="w-full max-w-sm bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 space-y-6">
+        <div className="w-full max-w-sm bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-2xl p-6 space-y-5">
           <div className="text-center space-y-1">
+            <div className="inline-flex items-center gap-1.5 bg-[#8A9A5B] text-white px-3 py-1 rounded-xl text-xs font-black mb-1">
+              <Shield size={14} />
+              <span>دخول المتسابقين</span>
+            </div>
             <h1 className="text-2xl font-black text-[#2C2A29]">كوّن فريقك 5</h1>
             <p className="text-xs font-bold text-[#5C4033]">
               غرفة: <span className="font-mono font-black">{roomCode}</span>
@@ -377,48 +434,59 @@ export const DraftMobileView: FC = () => {
           </div>
 
           <form onSubmit={handleJoin} className="space-y-4">
-            {/* Plain Brutalist Name Input */}
+            {/* 1. Name Input */}
             <div>
-              <label className="text-xs font-black text-[#5C4033] block mb-1">
-                اسم المتسابق
+              <label className="block text-xs font-black text-[#5C4033] mb-1.5">
+                اسمك:
               </label>
               <input
                 type="text"
                 value={playerName}
                 onChange={(e) => setPlayerName(e.target.value)}
                 placeholder="اكتب اسمك..."
-                className="w-full bg-white border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-xl px-4 py-3 font-black text-sm text-[#2C2A29] focus:outline-none"
+                className="w-full bg-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl px-4 py-3 font-bold text-[#2C2A29] outline-none text-sm focus:ring-2 focus:ring-[#8A9A5B]"
                 maxLength={20}
                 required
               />
             </div>
 
-            {/* Team Logo Picker Button */}
+            {/* 2. Selected Team Badge Preview & Open Selector */}
             <div>
-              <label className="text-xs font-black text-[#5C4033] block mb-1">
-                شعار الفريق (20 نادياً رسمياً)
+              <label className="block text-xs font-black text-[#5C4033] mb-1.5">
+                فريقك المختار:
               </label>
-              <div className="flex items-center gap-3">
-                {selectedClub && (
-                  <div className="w-12 h-12 rounded-xl bg-white border-2 border-[#2C2A29] p-1 flex items-center justify-center shrink-0 shadow-sm">
-                    <img src={selectedClub.badgeUrl} alt={selectedClub.name} className="w-full h-full object-contain" />
+              <div className="bg-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl p-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-11 h-11 rounded-lg bg-[#F7F4EC] border border-[#2C2A29] p-1 flex items-center justify-center shrink-0">
+                    <img
+                      src={selectedClub.badgeUrl}
+                      alt={selectedClub.name}
+                      className="w-full h-full object-contain"
+                      referrerPolicy="no-referrer"
+                    />
                   </div>
-                )}
+                  <div className="min-w-0">
+                    <span className="text-[11px] font-bold text-[#5C4033] block">الفريق الحالي:</span>
+                    <span className="text-sm font-black text-[#2C2A29] block truncate">{selectedClub.name}</span>
+                  </div>
+                </div>
                 <button
                   type="button"
                   onClick={() => setIsClubModalOpen(true)}
-                  className="flex-1 bg-[#F7F4EC] border-2 border-[#2C2A29] hover:bg-[#E5E0D5] py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm text-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] cursor-pointer transition-all truncate"
+                  className="bg-[#C68B59] hover:bg-[#B57A48] text-white text-xs font-black px-3.5 py-2 rounded-xl border border-[#2C2A29] shadow-sm hover:opacity-95 transition-all shrink-0 cursor-pointer"
                 >
-                  {selectedClub ? selectedClub.name : 'اختر شعار فريقك'}
+                  تغيير الفريق
                 </button>
               </div>
             </div>
 
+            {/* 3. Join Room Button */}
             <button
               type="submit"
-              className="w-full bg-[#8A9A5B] hover:bg-[#78884E] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none py-3.5 rounded-xl font-black text-base flex items-center justify-center gap-2 cursor-pointer transition-all"
+              disabled={!playerName.trim()}
+              className="w-full bg-[#8A9A5B] hover:bg-[#78884E] disabled:opacity-50 text-white font-black text-base py-3.5 rounded-xl border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-y-0.5 active:shadow-[2px_2px_0px_#2C2A29] transition-all cursor-pointer mt-2"
             >
-              <span>دخول الغرفة</span>
+              دخول الغرفة
             </button>
           </form>
         </div>
@@ -427,10 +495,7 @@ export const DraftMobileView: FC = () => {
         <DraftClubPickerModal
           isOpen={isClubModalOpen}
           selectedClubId={selectedClub?.id}
-          onSelectClub={(club) => {
-            setSelectedClub(club);
-            sessionStorage.setItem('draft_player_club', JSON.stringify(club));
-          }}
+          onSelectClub={handleSelectClub}
           onClose={() => setIsClubModalOpen(false)}
         />
       </div>
@@ -446,7 +511,7 @@ export const DraftMobileView: FC = () => {
       <header className="w-full bg-[#E5E0D5] border-b-2 border-[#2C2A29] px-4 py-2.5 flex items-center justify-between shadow-sm shrink-0">
         <div className="flex items-center gap-2">
           {selectedClub && (
-            <img src={selectedClub.badgeUrl} alt={selectedClub.name} className="w-7 h-7 object-contain" />
+            <img src={selectedClub.badgeUrl} alt={selectedClub.name} className="w-7 h-7 object-contain" referrerPolicy="no-referrer" />
           )}
           <div>
             <h2 className="font-black text-sm text-[#2C2A29] leading-tight">
@@ -477,20 +542,24 @@ export const DraftMobileView: FC = () => {
             ======================================================= */}
         {phase === 'LOBBY' && (
           <div className="flex-1 flex flex-col items-center justify-center text-center space-y-6 py-6 animate-fade-in">
-            {selectedClub ? (
-              <div className="w-20 h-20 bg-white border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl flex items-center justify-center p-2">
-                <img src={selectedClub.badgeUrl} alt={selectedClub.name} className="w-full h-full object-contain" />
+            {/* Club Badge Preview with Change Button */}
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-24 h-24 bg-white border-3 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] rounded-2xl flex items-center justify-center p-3 relative">
+                <img src={selectedClub.badgeUrl} alt={selectedClub.name} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
               </div>
-            ) : (
-              <div className="w-16 h-16 bg-[#8A9A5B] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl flex items-center justify-center text-white">
-                <Shield size={32} />
-              </div>
-            )}
+              <button
+                type="button"
+                onClick={() => setIsClubModalOpen(true)}
+                className="bg-[#C68B59] hover:bg-[#B57A48] text-white text-xs font-black px-4 py-1.5 rounded-xl border border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] active:translate-x-[1px] active:translate-y-[1px] cursor-pointer transition-all"
+              >
+                تغيير الفريق ({selectedClub.name})
+              </button>
+            </div>
 
             <div className="space-y-1">
               <h3 className="text-xl font-black text-[#2C2A29]">أهلاً بك {playerName}!</h3>
               <p className="text-xs font-bold text-[#5C4033]">
-                أنت جاهز لتمثيل <span className="text-[#8A9A5B] font-black">{selectedClub?.name}</span>، اضغط زر الاستعداد للمنافسة!
+                أنت تمثل رسمياً نادي <span className="text-[#8A9A5B] font-black">{selectedClub?.name}</span>، اضغط زر الاستعداد للمنافسة!
               </p>
             </div>
 
@@ -506,6 +575,7 @@ export const DraftMobileView: FC = () => {
                   playerId: playerIdRef.current,
                   playerName: playerNameRef.current,
                   selectedClub: selectedClubRef.current,
+                  teamLogo: selectedClubRef.current.badgeUrl,
                   isReady: nextReady,
                 });
               }}
@@ -568,134 +638,152 @@ export const DraftMobileView: FC = () => {
             </div>
 
             {/* -----------------------------------------------------
-                SECTION 2: MIDDLE SEARCH BAR & STRICT PINNING
+                SECTION 2: TACTICAL HALF-PITCH SQUAD BOARD (40-45% Screen)
                 ----------------------------------------------------- */}
-            <div className="space-y-2">
-              {/* Position Selection Notice / Indicator */}
-              <div className="flex items-center justify-between px-1">
-                <span className="text-xs font-black text-[#2C2A29]">
-                  {selectedSlotKey ? (
-                    <span className="text-[#C68B59] font-black">
-                      المركز المختار للبحث: [{DRAFT_POSITION_NAMES[selectedSlotKey]}]
-                    </span>
-                  ) : (
-                    <span className="text-[#5C4033]">
-                      اضغط على مركز في الملعب أولاً
-                    </span>
-                  )}
+            <div className="relative">
+              <DraftTacticalPitch
+                picks={myPicks}
+                selectedPosition={selectedSlotKey}
+                onSelectSlot={(pos) => {
+                  if (myPicks[pos]) return; // Cannot re-select already filled slot
+                  sound.playClick();
+                  setSelectedSlotKey(pos);
+                  setSelectedPlayer(null);
+                }}
+                interactive={isMyTurn}
+              />
+            </div>
+
+            {/* -----------------------------------------------------
+                SECTION 3: NAME-ONLY SEARCH & SELECTION CONTROLS
+                ----------------------------------------------------- */}
+            <div className="space-y-2 bg-[#F7F4EC] border-2 border-[#2C2A29] p-3 rounded-2xl shadow-[3px_3px_0px_#2C2A29]">
+              {/* Slot Target Indicator */}
+              <div className="flex items-center justify-between text-xs font-black">
+                <span className="text-[#5C4033]">
+                  المركز المستهدف للتثبيت:
                 </span>
+                {selectedSlotKey ? (
+                  <span className="bg-[#8A9A5B] text-white px-2.5 py-0.5 rounded-lg border border-[#2C2A29]">
+                    {DRAFT_POSITION_NAMES[selectedSlotKey]}
+                  </span>
+                ) : (
+                  <span className="bg-[#C68B59] text-white px-2.5 py-0.5 rounded-lg border border-[#2C2A29]">
+                    اضغط مركزاً في الملعب أولاً 👆
+                  </span>
+                )}
               </div>
 
-              {/* Search Input with Position Selection Gate */}
+              {/* Search Bar (Enabled only when slot is selected and it's player's turn) */}
               <div className="relative">
                 <input
                   type="text"
-                  disabled={!isMyTurn || !selectedSlotKey}
                   value={query}
                   onChange={(e) => {
                     setQuery(e.target.value);
                     setSelectedPlayer(null);
                   }}
+                  disabled={!isMyTurn || !selectedSlotKey}
                   placeholder={
                     !isMyTurn
-                      ? "مو دورك.. انتظر دورك للاختيار"
-                      : selectedSlotKey
-                      ? "ابحث عن اللاعب وثبته..."
-                      : "اضغط على مركز في الملعب أولاً"
+                      ? 'مو دورك.. انتظر دورك للاختيار'
+                      : !selectedSlotKey
+                      ? 'حدد مركزاً في الملعب أولاً...'
+                      : `ابحث عن اسم لاعب لمركز (${DRAFT_POSITION_NAMES[selectedSlotKey]})...`
                   }
-                  className={`w-full border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-xl px-3.5 py-2.5 font-black text-sm transition-all focus:outline-none ${
+                  className={`w-full border-2 border-[#2C2A29] rounded-xl px-4 py-2.5 font-bold text-xs sm:text-sm text-[#2C2A29] focus:outline-none transition-all shadow-[2px_2px_0px_#2C2A29] ${
                     !isMyTurn || !selectedSlotKey
-                      ? 'bg-[#D5CFC5] text-[#8C827A] placeholder-[#8C827A] cursor-not-allowed'
-                      : 'bg-white text-[#2C2A29] placeholder-[#5C4033]/60'
+                      ? 'bg-gray-100 placeholder-gray-400 cursor-not-allowed'
+                      : 'bg-white placeholder-[#5C4033]/60 focus:bg-[#F7F4EC]'
                   }`}
                 />
-                {query && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQuery('');
-                      setSelectedPlayer(null);
-                    }}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-[#5C4033]"
-                  >
-                    مسح
-                  </button>
-                )}
               </div>
 
-              {/* Name-Only Autocomplete Dropdown List */}
-              {isMyTurn && selectedSlotKey && searchResults.length > 0 && (
-                <div className="max-h-40 overflow-y-auto space-y-1 p-1 bg-white rounded-xl border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29]">
-                  {searchResults.map((player) => (
-                    <button
-                      key={player.id}
-                      type="button"
-                      onClick={() => {
-                        sound.playClick();
-                        handleConfirmPick(player);
-                      }}
-                      className="w-full text-right p-2 rounded-lg hover:bg-[#E5E0D5] text-[#2C2A29] border border-[#2C2A29]/10 flex items-center justify-between cursor-pointer transition-all"
-                    >
-                      {/* STRICTLY PLAYER NAME ONLY */}
-                      <span className="font-bold text-sm leading-tight text-[#2C2A29]">
-                        {player.name}
-                      </span>
-                      <span className="text-[10px] font-black text-[#8A9A5B]">تثبيت</span>
-                    </button>
-                  ))}
+              {/* Clean Autocomplete Dropdown List */}
+              {selectedSlotKey && query.trim() && isMyTurn && (
+                <div className="max-h-40 overflow-y-auto border-2 border-[#2C2A29] rounded-xl bg-white divide-y divide-[#2C2A29]/10 shadow-[3px_3px_0px_#2C2A29]">
+                  {searchResults.length > 0 ? (
+                    searchResults.map((p) => {
+                      const isTarget = selectedPlayer?.id === p.id;
+                      return (
+                        <div
+                          key={p.id}
+                          onClick={() => {
+                            sound.playClick();
+                            setSelectedPlayer(p);
+                            setQuery(p.name);
+                          }}
+                          className={`p-2.5 flex items-center justify-between text-xs cursor-pointer transition-colors ${
+                            isTarget
+                              ? 'bg-[#8A9A5B] text-white font-black'
+                              : 'hover:bg-[#E5E0D5] text-[#2C2A29] font-bold'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span>{p.name}</span>
+                            <span className="opacity-70 text-[10px]">({p.currentClub || p.nationality})</span>
+                          </div>
+                          <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-black/10">
+                            {p.position}
+                          </span>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="p-3 text-center space-y-2">
+                      <p className="text-xs font-bold text-[#5C4033]">
+                        لم يتم العثور على اللاعب في قاعدة البيانات.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handlePinCustomPlayer}
+                        className="w-full bg-[#C68B59] hover:bg-[#B57A48] text-white text-xs font-black py-2 px-3 rounded-lg border border-[#2C2A29] flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                      >
+                        <Pin size={14} />
+                        <span>تثبيت "{query.trim()}" كاختيار يدوي</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Custom Pin Button (If typed name not found in database or custom pinning) */}
-              {isMyTurn && selectedSlotKey && query.trim().length > 1 && (
-                <button
-                  type="button"
-                  onClick={handlePinCustomPlayer}
-                  className="bg-[#8A9A5B] hover:bg-[#78884E] text-white p-2.5 rounded-xl font-black w-full border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-x-[1px] active:translate-y-[1px] flex items-center justify-center gap-2 cursor-pointer transition-all"
-                >
-                  <Pin size={16} />
-                  <span>تثبيت اللاعب: "{query.trim()}"</span>
-                </button>
-              )}
-            </div>
-
-            {/* -----------------------------------------------------
-                SECTION 3: BOTTOM TACTICAL HALF-PITCH (~50% HEIGHT)
-                ----------------------------------------------------- */}
-            <div>
-              <div className="flex items-center justify-between pb-1 px-1">
-                <span className="text-xs font-black text-[#5C4033]">
-                  نصف الملعب التكتيكي (انقر لاختيار المركز):
-                </span>
-                <span className="text-[10px] font-black text-[#8A9A5B]">
-                  {Object.values(myPicks).filter(Boolean).length}/5 مكتمل
-                </span>
-              </div>
-
-              <DraftTacticalPitch
-                picks={myPicks}
-                selectedPosition={selectedSlotKey}
-                onSelectSlot={(pos) => {
-                  if (isMyTurn) {
-                    sound.playClick();
-                    setSelectedSlotKey(pos);
-                    setQuery('');
-                    setSelectedPlayer(null);
+              {/* Confirm Lock-In Button (Ochre Orange bg-[#C68B59]) */}
+              <button
+                type="button"
+                disabled={!isMyTurn || !selectedSlotKey || (!selectedPlayer && !query.trim())}
+                onClick={() => {
+                  if (selectedPlayer) {
+                    handleConfirmPick(selectedPlayer);
+                  } else if (query.trim()) {
+                    handlePinCustomPlayer();
                   }
                 }}
-                interactive={isMyTurn}
-              />
+                className={`w-full py-3 rounded-xl font-black text-sm border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all flex items-center justify-center gap-2 ${
+                  isMyTurn && selectedSlotKey && (selectedPlayer || query.trim())
+                    ? 'bg-[#C68B59] hover:bg-[#B57A48] text-[#F7F4EC] cursor-pointer'
+                    : 'bg-[#D5CFC5] text-[#5C4033] opacity-60 cursor-not-allowed'
+                }`}
+              >
+                <Trophy size={16} />
+                <span>
+                  {selectedPlayer
+                    ? `تثبيت ${selectedPlayer.name} في ${DRAFT_POSITION_SHORT_NAMES_MAP[selectedSlotKey || 'FWD']}`
+                    : query.trim() && selectedSlotKey
+                    ? `تثبيت "${query.trim()}" يدوياً`
+                    : 'حدد لاعباً ومركزاً للتثبيت'}
+                </span>
+              </button>
             </div>
           </div>
         )}
 
         {/* =======================================================
-            STATE: AI REVEAL & ROUND 5 PODIUM TRANSITIONS
+            STATE: AI_REVEAL & ROUND BREAK
             ======================================================= */}
         {phase === 'AI_REVEAL' && (
-          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-4 py-4 animate-fade-in">
-            <div className="w-16 h-16 bg-[#8A9A5B] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl flex items-center justify-center text-3xl text-white">
-              <Trophy size={32} />
+          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-5 py-4 animate-fade-in">
+            <div className="w-16 h-16 bg-[#8A9A5B] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl flex items-center justify-center text-3xl animate-bounce text-white">
+              ⚡
             </div>
 
             <div className="space-y-1">
@@ -742,6 +830,22 @@ export const DraftMobileView: FC = () => {
           </div>
         )}
       </main>
+
+      {/* 20 Curated Clubs Modal */}
+      <DraftClubPickerModal
+        isOpen={isClubModalOpen}
+        selectedClubId={selectedClub?.id}
+        onSelectClub={handleSelectClub}
+        onClose={() => setIsClubModalOpen(false)}
+      />
     </div>
   );
+};
+
+const DRAFT_POSITION_SHORT_NAMES_MAP: Record<DraftPosition, string> = {
+  FWD: 'المهاجم',
+  MID: 'الوسط',
+  DEF_1: 'المدافع 1',
+  DEF_2: 'المدافع 2',
+  GK: 'الحارس',
 };

@@ -30,7 +30,7 @@ export const DraftClubPickerModal: FC<DraftClubPickerModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 select-none animate-fade-in"
+      className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 select-none animate-fade-in"
       dir="rtl"
     >
       <div className="bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">

@@ -447,7 +447,7 @@ export const DraftTVView: FC = () => {
               id: entry.id,
               name: entry.name || '',
               isReady: entry.isReady || false,
-              selectedClub: entry.selectedClub || existing?.selectedClub || null,
+              selectedClub: entry.selectedClub || (entry.teamName && entry.teamLogo ? { id: entry.teamId || 'club', name: entry.teamName, league: '', country: '', badgeUrl: entry.teamLogo } : existing?.selectedClub) || null,
               picks: existing ? existing.picks : { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
               pickConditions: existing ? existing.pickConditions : { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
               readyForNextRound: existing?.readyForNextRound || false,
@@ -469,7 +469,7 @@ export const DraftTVView: FC = () => {
                   id: entry.id,
                   name: entry.name || '',
                   isReady: false,
-                  selectedClub: entry.selectedClub || null,
+                  selectedClub: entry.selectedClub || (entry.teamName && entry.teamLogo ? { id: entry.teamId || 'club', name: entry.teamName, league: '', country: '', badgeUrl: entry.teamLogo } : null),
                   picks: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
                   pickConditions: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
                   readyForNextRound: false,
@@ -490,7 +490,11 @@ export const DraftTVView: FC = () => {
         if (!payload) return;
         const ev = payload as DraftEventPayload;
 
-        if (ev.action === 'PLAYER_READY' && ev.playerId) {
+        if ((ev.action === 'PLAYER_READY' || (ev.action as string) === 'UPDATE_TEAM') && ev.playerId) {
+          setContestants((prev) =>
+            prev.map((p) => (p.id === ev.playerId ? { ...p, isReady: ev.isReady !== undefined ? Boolean(ev.isReady) : p.isReady, selectedClub: ev.selectedClub || p.selectedClub } : p))
+          );
+        } else if (ev.action === 'PLAYER_READY' && ev.playerId) {
           setContestants((prev) =>
             prev.map((p) => (p.id === ev.playerId ? { ...p, isReady: Boolean(ev.isReady), selectedClub: ev.selectedClub || p.selectedClub } : p))
           );
@@ -705,32 +709,45 @@ export const DraftTVView: FC = () => {
                       بانتظار انضمام المتسابقين واختيار شعارات أنديتهم...
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 gap-2.5 max-h-60 overflow-y-auto p-1 mt-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-72 overflow-y-auto p-1 mt-3">
                       {contestants.map((p) => (
                         <div
                           key={p.id}
-                          className="flex items-center justify-between gap-2 bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-3 py-2 rounded-xl"
+                          className="flex items-center justify-between gap-3 bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-3.5 py-2.5 rounded-2xl"
                         >
-                          <div className="flex items-center gap-2 truncate">
-                            {p.selectedClub && (
-                              <img src={p.selectedClub.badgeUrl} alt={p.selectedClub.name} className="w-5 h-5 object-contain shrink-0" />
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {p.selectedClub ? (
+                              <div className="w-10 h-10 rounded-xl bg-white border border-[#2C2A29] p-1 flex items-center justify-center shrink-0 shadow-sm">
+                                <img src={p.selectedClub.badgeUrl} alt={p.selectedClub.name} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                              </div>
+                            ) : (
+                              <div className="w-10 h-10 rounded-xl bg-[#2C2A29]/10 border border-[#2C2A29] flex items-center justify-center shrink-0 font-bold text-xs text-[#5C4033]">
+                                ⚽
+                              </div>
                             )}
-                            <span className="font-black text-sm text-[#2C2A29] truncate">{p.name}</span>
-                            {p.isReady && (
-                              <span className="text-[10px] bg-[#8A9A5B] text-white px-1.5 py-0.5 rounded-md font-black shrink-0">
-                                جاهز ✓
+                            <div className="min-w-0">
+                              <span className="font-black text-sm text-[#2C2A29] block truncate">{p.name}</span>
+                              <span className="text-[11px] font-bold text-[#5C4033] block truncate">
+                                {p.selectedClub ? p.selectedClub.name : 'فريق افتراضي'}
                               </span>
-                            )}
+                            </div>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={() => handleKickPlayer(p.id)}
-                            className="bg-[#C68B59] hover:bg-[#2C2A29] text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shrink-0 transition-colors cursor-pointer"
-                            title="استبعاد المتسابق"
-                          >
-                            ×
-                          </button>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`text-xs px-2.5 py-1 rounded-xl font-black border border-[#2C2A29] ${
+                              p.isReady ? 'bg-[#8A9A5B] text-white' : 'bg-[#F7F4EC] text-[#5C4033]'
+                            }`}>
+                              {p.isReady ? 'جاهز ✓' : 'في الانتظار'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleKickPlayer(p.id)}
+                              className="bg-[#C68B59] hover:bg-[#2C2A29] text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-black transition-colors cursor-pointer border border-[#2C2A29]"
+                              title="استبعاد المتسابق"
+                            >
+                              ×
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
