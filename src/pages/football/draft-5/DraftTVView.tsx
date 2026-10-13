@@ -5,6 +5,7 @@ import { RealtimeChannel } from '@supabase/supabase-js';
 import {
   DraftPhase,
   DraftPosition,
+  PlayerSquad,
   DraftContestant,
   DraftEventPayload,
   SquadAIEvaluation,
@@ -49,6 +50,9 @@ export const DraftTVView: FC = () => {
 
   // Participants & Secret Picks
   const [contestants, setContestants] = useState<DraftContestant[]>([]);
+  const [allSquads, setAllSquads] = useState<Record<string, PlayerSquad>>({});
+  const allSquadsRef = useRef<Record<string, PlayerSquad>>({});
+  useEffect(() => { allSquadsRef.current = allSquads; }, [allSquads]);
   const [usedConditions, setUsedConditions] = useState<DraftCondition[]>([]);
   const [draftedPlayerIds, setDraftedPlayerIds] = useState<string[]>([]);
 
@@ -167,6 +171,7 @@ export const DraftTVView: FC = () => {
     setCurrentTurnIndex(0);
     setTimeLeftSec(30);
     setDraftedPlayerIds([]);
+    setAllSquads({});
     setVerdictResult(null);
     setPhase('DRAFTING');
 
@@ -254,7 +259,45 @@ export const DraftTVView: FC = () => {
     broadcastEvent({ action: 'AI_EVALUATION_START' });
 
     // Execute Two-Tier Adjudication
-    evaluateDraftSquadsWithAI(updatedContestants, usedConditionsRef.current).then((result) => {
+    // Merge updatedContestants with allSquads to guarantee 100% squad completeness
+    const mergedContestants: DraftContestant[] = updatedContestants.map((c) => {
+      const sq = allSquadsRef.current[c.id];
+      if (!sq) return c;
+      const mergedPicks = { ...c.picks };
+      const mergedConds = { ...(c.pickConditions || { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null }) };
+      (Object.keys(sq.slots || {}) as DraftPosition[]).forEach((pos) => {
+        const slot = sq.slots[pos];
+        if (slot && !mergedPicks[pos]) {
+          mergedPicks[pos] = {
+            id: 'synced_' + pos + '_' + c.id,
+            name: slot.playerName,
+            aliases: [slot.playerName],
+            nationality: 'غير محدد',
+            nationalityCode: 'UN',
+            clubs: [],
+            currentClub: 'مخصص',
+            position: pos === 'GK' ? 'GK' : pos === 'MID' ? 'MID' : pos === 'FWD' ? 'FWD' : 'DEF',
+            traits: [],
+            trophies: [],
+          };
+          if (!mergedConds[pos]) {
+            mergedConds[pos] = {
+              id: slot.conditionId || 'c_general',
+              title: slot.conditionTitle || 'شرط معتمد',
+              rulePrompt: slot.conditionTitle || 'شرط معتمد',
+              };
+          }
+        }
+      });
+      return {
+        ...c,
+        selectedClub: c.selectedClub || sq.selectedClub || null,
+        picks: mergedPicks,
+        pickConditions: mergedConds,
+      };
+    });
+
+    evaluateDraftSquadsWithAI(mergedContestants, usedConditionsRef.current).then((result) => {
       setVerdictResult(result);
       setIsEvaluating(false);
 
@@ -456,8 +499,85 @@ export const DraftTVView: FC = () => {
           setContestants((prev) =>
             prev.map((p) => (p.id === ev.playerId ? { ...p, readyForNextRound: Boolean(ev.isReady) } : p))
           );
-        } else if (ev.action === 'PICK_LOCKED' && ev.playerId && ev.pickedPosition && ev.pickedPlayer) {
-          handleContestantPick(ev.playerId, ev.pickedPosition, ev.pickedPlayer, ev.appliedCondition);
+        } else if (ev.action === 'PLAYER_PICKED' || ev.action === 'PICK_LOCKED') {
+          if (ev.playerId && ev.slotKey && ev.pickedPlayerName) {
+            const pId = ev.playerId;
+            const sKey = ev.slotKey;
+            const pName = ev.pickedPlayerName;
+            const cId = ev.conditionId || '';
+            const cTitle = ev.conditionTitle || '';
+            setAllSquads((prev) => {
+              const current = prev[pId] || {
+                playerId: pId,
+                playerName: ev.playerName || '',
+                teamLogo: ev.teamLogo,
+                selectedClub: ev.selectedClub,
+                slots: {},
+              };
+              return {
+                ...prev,
+                [pId]: {
+                  ...current,
+                  teamLogo: ev.teamLogo || current.teamLogo,
+                  selectedClub: ev.selectedClub || current.selectedClub,
+                  slots: {
+                    ...current.slots,
+                    [sKey]: {
+                      playerName: pName,
+                      conditionId: cId,
+                      conditionTitle: cTitle,
+                    },
+                  },
+                },
+              };
+            });
+          }
+          if (ev.playerId && ev.pickedPosition && ev.pickedPlayer) {
+            handleContestantPick(ev.playerId, ev.pickedPosition, ev.pickedPlayer, ev.appliedCondition);
+          }
+        } else if (ev.action === 'DRAFT_COMPLETE' && ev.playerId && ev.squad) {
+          const pId = ev.playerId;
+          const incomingSquad = ev.squad;
+          setAllSquads((prev) => ({
+            ...prev,
+            [pId]: incomingSquad,
+          }));
+          // Also update contestant picks directly
+          setContestants((prev) =>
+            prev.map((c) => {
+              if (c.id !== pId) return c;
+              const newPicks = { ...c.picks };
+              const newConds = { ...(c.pickConditions || { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null }) };
+              (Object.keys(incomingSquad.slots || {}) as DraftPosition[]).forEach((pos) => {
+                const sl = incomingSquad.slots[pos];
+                if (sl && !newPicks[pos]) {
+                  newPicks[pos] = {
+                    id: 'squad_' + pos + '_' + pId,
+                    name: sl.playerName,
+                    aliases: [sl.playerName],
+                    nationality: 'غير محدد',
+                    nationalityCode: 'UN',
+                    clubs: [],
+                    currentClub: 'مخصص',
+                    position: pos === 'GK' ? 'GK' : pos === 'MID' ? 'MID' : pos === 'FWD' ? 'FWD' : 'DEF',
+                    traits: [],
+                    trophies: [],
+                  };
+                  newConds[pos] = {
+                    id: sl.conditionId || 'c_general',
+                    title: sl.conditionTitle || 'شرط معتمد',
+                    rulePrompt: sl.conditionTitle || 'شرط معتمد',
+                    };
+                }
+              });
+              return {
+                ...c,
+                selectedClub: c.selectedClub || incomingSquad.selectedClub || null,
+                picks: newPicks,
+                pickConditions: newConds,
+              };
+            })
+          );
         }
       })
       .subscribe((status) => {
@@ -800,6 +920,7 @@ export const DraftTVView: FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full text-right">
                   {rankedEvaluations.map((ev, idx) => {
                     const contestant = contestants.find((c) => c.id === ev.playerId);
+                    const squadBackup = allSquads[ev.playerId];
                     const picks = contestant?.picks;
                     const isWinner = ev.playerId === verdictResult.winnerId;
 
@@ -857,7 +978,7 @@ export const DraftTVView: FC = () => {
                                 >
                                   <div className="flex items-center justify-between font-black">
                                     <span className="text-[#2C2A29]">
-                                      {DRAFT_POSITION_SHORT_NAMES[pos]}: {p?.name || 'فارغ'}
+                                      {DRAFT_POSITION_SHORT_NAMES[pos]}: {p?.name || squadBackup?.slots?.[pos]?.playerName || ver?.playerName || 'فارغ'}
                                     </span>
                                     <span className={`flex items-center gap-1 font-bold ${isValid ? 'text-[#8A9A5B]' : 'text-[#C68B59]'}`}>
                                       {isValid ? <CheckCircle size={14} /> : <XCircle size={14} />}

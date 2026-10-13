@@ -7,6 +7,7 @@ import {
   DraftPosition,
   DraftEventPayload,
   DRAFT_POSITION_NAMES,
+  PlayerSquad,
 } from './types';
 import { DraftCondition } from '../../../data/draftConditions';
 import { DRAFT_CURATED_CLUBS, DraftClub } from '../../../data/draftClubs';
@@ -61,6 +62,14 @@ export const DraftMobileView: FC = () => {
     GK: null,
   });
 
+  const [myConditions, setMyConditions] = useState<Record<DraftPosition, DraftCondition | null>>({
+    FWD: null,
+    MID: null,
+    DEF_1: null,
+    DEF_2: null,
+    GK: null,
+  });
+
   // Selected Target Slot on Personal Tactical Pitch (Gate for Search Bar)
   const [selectedSlotKey, setSelectedSlotKey] = useState<DraftPosition | null>(null);
 
@@ -75,12 +84,14 @@ export const DraftMobileView: FC = () => {
   const selectedClubRef = useRef<DraftClub | null>(selectedClub);
   const hasJoinedRef = useRef<boolean>(hasJoined);
   const myPicksRef = useRef<Record<DraftPosition, FootballPlayer | null>>(myPicks);
+  const myConditionsRef = useRef<Record<DraftPosition, DraftCondition | null>>(myConditions);
 
   useEffect(() => { playerIdRef.current = playerId; }, [playerId]);
   useEffect(() => { playerNameRef.current = playerName; }, [playerName]);
   useEffect(() => { selectedClubRef.current = selectedClub; }, [selectedClub]);
   useEffect(() => { hasJoinedRef.current = hasJoined; }, [hasJoined]);
   useEffect(() => { myPicksRef.current = myPicks; }, [myPicks]);
+  useEffect(() => { myConditionsRef.current = myConditions; }, [myConditions]);
 
   const isMyTurn = currentPickerId === playerId;
 
@@ -102,10 +113,15 @@ export const DraftMobileView: FC = () => {
     return raw.filter((p) => !draftedPlayerIds.includes(p.id));
   }, [query, draftedPlayerIds]);
 
-  // Handle Turn Change Sound
+  // Handle Turn Change Sound & Vibration
   useEffect(() => {
     if (isMyTurn && phase === 'DRAFTING') {
       sound.playWhistle();
+      try {
+        if (navigator.vibrate) {
+          navigator.vibrate([100, 50, 100]);
+        }
+      } catch {}
     }
   }, [isMyTurn, phase]);
 
@@ -140,26 +156,75 @@ export const DraftMobileView: FC = () => {
 
     sound.playClick();
 
-    // 1. Update local tactical pitch
-    setMyPicks((prev) => ({
-      ...prev,
-      [selectedSlotKey]: target,
-    }));
-
     const slotAssigned = selectedSlotKey;
+    const currentCond = activeCondition;
+
+    // 1. Update local tactical pitch and conditions map
+    const updatedPicks = {
+      ...myPicksRef.current,
+      [slotAssigned]: target,
+    };
+    const updatedConditions = {
+      ...myConditionsRef.current,
+      [slotAssigned]: currentCond,
+    };
+
+    setMyPicks(updatedPicks);
+    setMyConditions(updatedConditions);
+
     setSelectedPlayer(null);
     setSelectedSlotKey(null); // Reset active slot gate
     setQuery('');
 
-    // 2. Broadcast pick to TV with the chosen slot
+    // 2. Broadcast PLAYER_PICKED & PICK_LOCKED to TV
     broadcastEvent({
-      action: 'PICK_LOCKED',
+      action: 'PLAYER_PICKED',
       playerId,
       playerName,
+      teamLogo: selectedClubRef.current?.badgeUrl,
+      selectedClub: selectedClubRef.current,
+      slotKey: slotAssigned,
+      pickedPlayerName: target.name,
+      conditionId: currentCond?.id || '',
+      conditionTitle: currentCond?.title || '',
       pickedPosition: slotAssigned,
       pickedPlayer: target,
-      appliedCondition: activeCondition || undefined,
+      appliedCondition: currentCond || undefined,
     });
+
+    // Check if player has now finished all 5 slots
+    const totalFilled = Object.values(updatedPicks).filter(Boolean).length;
+    if (totalFilled === 5) {
+      // Build full PlayerSquad object
+      const squadSlots: PlayerSquad['slots'] = {};
+      (Object.keys(updatedPicks) as DraftPosition[]).forEach((pos) => {
+        const p = updatedPicks[pos];
+        const c = updatedConditions[pos];
+        if (p) {
+          squadSlots[pos] = {
+            playerName: p.name,
+            conditionId: c?.id || '',
+            conditionTitle: c?.title || '',
+          };
+        }
+      });
+
+      const fullSquad: PlayerSquad = {
+        playerId,
+        playerName,
+        teamLogo: selectedClubRef.current?.badgeUrl,
+        selectedClub: selectedClubRef.current,
+        slots: squadSlots,
+      };
+
+      broadcastEvent({
+        action: 'DRAFT_COMPLETE',
+        playerId,
+        playerName,
+        selectedClub: selectedClubRef.current,
+        squad: fullSquad,
+      });
+    }
   }, [selectedPlayer, selectedSlotKey, isMyTurn, phase, activeCondition, playerId, playerName, broadcastEvent]);
 
   // Custom Pinning Handler (If typed name has no matches or player prefers custom pinning)
@@ -213,6 +278,7 @@ export const DraftMobileView: FC = () => {
           setSelectedPlayer(null);
           setReadyForNextRound(false);
           setMyPicks({ FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null });
+          setMyConditions({ FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null });
           if (ev.draftedPlayerIds) setDraftedPlayerIds(ev.draftedPlayerIds);
         } else if (ev.action === 'START_NEXT_ROUND') {
           // Advance to Round N+1 with fresh board and new conditions
@@ -226,18 +292,19 @@ export const DraftMobileView: FC = () => {
           setSelectedPlayer(null);
           setReadyForNextRound(false);
           setMyPicks({ FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null });
+          setMyConditions({ FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null });
           if (ev.draftedPlayerIds) setDraftedPlayerIds(ev.draftedPlayerIds);
         } else if (ev.action === 'ROUND_ADVANCE') {
           setPhase('DRAFTING');
-          setRound(ev.round || 1);
-          setActiveCondition(ev.activeCondition || null);
-          setCurrentPickerId(ev.currentPickerId || '');
-          setCurrentPickerName(ev.currentPickerName || '');
+          if (ev.round) setRound(ev.round);
+          if (ev.activeCondition) setActiveCondition(ev.activeCondition);
+          if (ev.currentPickerId) setCurrentPickerId(ev.currentPickerId);
+          if (ev.currentPickerName) setCurrentPickerName(ev.currentPickerName);
           setSelectedSlotKey(null);
           setQuery('');
           setSelectedPlayer(null);
           if (ev.draftedPlayerIds) setDraftedPlayerIds(ev.draftedPlayerIds);
-        } else if (ev.action === 'PICK_LOCKED') {
+        } else if (ev.action === 'PICK_LOCKED' || ev.action === 'PLAYER_PICKED') {
           if (ev.draftedPlayerIds) setDraftedPlayerIds(ev.draftedPlayerIds);
           if (ev.currentPickerId) {
             setCurrentPickerId(ev.currentPickerId);
@@ -251,6 +318,7 @@ export const DraftMobileView: FC = () => {
           setIsReady(false);
           setReadyForNextRound(false);
           setMyPicks({ FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null });
+          setMyConditions({ FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null });
         } else if (ev.action === 'KICK_PLAYER') {
           if (ev.targetPlayerId === playerIdRef.current) {
             sessionStorage.removeItem('draft_player_id');
@@ -459,6 +527,32 @@ export const DraftMobileView: FC = () => {
         {phase === 'DRAFTING' && (
           <div className="flex-1 flex flex-col justify-between space-y-2.5">
             {/* -----------------------------------------------------
+                WAITING STATE BANNER (When NOT my turn)
+                ----------------------------------------------------- */}
+            {!isMyTurn ? (
+              <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl p-3.5 text-center">
+                <span className="inline-block bg-[#C68B59] text-white text-xs font-black px-3 py-1 rounded-full mb-1.5">
+                  انتظر دورك
+                </span>
+                <h3 className="text-lg sm:text-xl font-black text-[#2C2A29]">
+                  مو دورك حالياً للاختيار
+                </h3>
+                <p className="text-xs sm:text-sm font-bold text-[#2C2A29]/80 mt-1">
+                  الدور الحالي عند: <span className="text-[#8A9A5B] font-black underline">{currentPickerName || 'المتسابق الآخر'}</span>
+                </p>
+              </div>
+            ) : (
+              <div className="bg-[#8A9A5B] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl p-3 text-center text-white">
+                <span className="inline-block bg-[#2C2A29] text-white text-[11px] font-black px-2.5 py-0.5 rounded-full mb-1">
+                  دورك الآن ⚡
+                </span>
+                <h3 className="text-base sm:text-lg font-black leading-tight">
+                  اختر لاعباً وثبته في مركزك الآن!
+                </h3>
+              </div>
+            )}
+
+            {/* -----------------------------------------------------
                 SECTION 1: TOP CONDITION DISPLAY CARD
                 ----------------------------------------------------- */}
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] p-3 rounded-xl text-center shadow-[3px_3px_0px_#2C2A29]">
@@ -486,19 +580,10 @@ export const DraftMobileView: FC = () => {
                     </span>
                   ) : (
                     <span className="text-[#5C4033]">
-                      اختر مركزاً في الملعب أولاً لتفعيله
+                      اضغط على مركز في الملعب أولاً
                     </span>
                   )}
                 </span>
-                {isMyTurn ? (
-                  <span className="text-[10px] font-black bg-[#8A9A5B] text-white px-2 py-0.5 rounded-full">
-                    دورك الآن ⚡
-                  </span>
-                ) : (
-                  <span className="text-[10px] font-bold text-[#5C4033]">
-                    دور: {currentPickerName}
-                  </span>
-                )}
               </div>
 
               {/* Search Input with Position Selection Gate */}
@@ -513,7 +598,7 @@ export const DraftMobileView: FC = () => {
                   }}
                   placeholder={
                     !isMyTurn
-                      ? "انتظر دورك للتجنيد..."
+                      ? "مو دورك.. انتظر دورك للاختيار"
                       : selectedSlotKey
                       ? "ابحث عن اللاعب وثبته..."
                       : "اضغط على مركز في الملعب أولاً"
@@ -591,10 +676,12 @@ export const DraftMobileView: FC = () => {
                 picks={myPicks}
                 selectedPosition={selectedSlotKey}
                 onSelectSlot={(pos) => {
-                  sound.playClick();
-                  setSelectedSlotKey(pos);
-                  setQuery('');
-                  setSelectedPlayer(null);
+                  if (isMyTurn) {
+                    sound.playClick();
+                    setSelectedSlotKey(pos);
+                    setQuery('');
+                    setSelectedPlayer(null);
+                  }
                 }}
                 interactive={isMyTurn}
               />

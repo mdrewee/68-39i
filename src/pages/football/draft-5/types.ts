@@ -31,6 +31,20 @@ export const DRAFT_SLOTS_ORDER: DraftPosition[] = [
 
 export type DraftPhase = 'LOBBY' | 'DRAFTING' | 'AI_REVEAL' | 'MATCH_OVER';
 
+export interface PlayerSquadSlot {
+  playerName: string;
+  conditionId?: string;
+  conditionTitle?: string;
+}
+
+export interface PlayerSquad {
+  playerId: string;
+  playerName: string;
+  teamLogo?: string;
+  selectedClub?: DraftClub | null;
+  slots: Partial<Record<DraftPosition, PlayerSquadSlot>>;
+}
+
 export interface DraftContestantPick {
   position: DraftPosition;
   player: FootballPlayer;
@@ -100,6 +114,8 @@ export type DraftAction =
   | 'KICK_PLAYER'
   | 'GAME_START'
   | 'PICK_LOCKED'
+  | 'PLAYER_PICKED'
+  | 'DRAFT_COMPLETE'
   | 'ROUND_ADVANCE'
   | 'AI_EVALUATION_START'
   | 'AI_EVALUATION_DONE'
@@ -120,6 +136,14 @@ export interface DraftEventPayload {
   pickedPosition?: DraftPosition;
   pickedPlayer?: FootballPlayer;
   appliedCondition?: DraftCondition;
+  // Specific payload for PLAYER_PICKED and DRAFT_COMPLETE
+  slotKey?: DraftPosition;
+  pickedPlayerName?: string;
+  conditionId?: string;
+  conditionTitle?: string;
+  teamLogo?: string;
+  squad?: PlayerSquad;
+  allSquads?: Record<string, PlayerSquad>;
   draftedPlayerIds?: string[]; // Global anti-steal list
   evaluations?: SquadAIEvaluation[];
   verdictResult?: DraftVerdictResult;
