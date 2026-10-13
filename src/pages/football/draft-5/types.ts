@@ -1,30 +1,32 @@
 import { DraftCondition } from '../../../data/draftConditions';
 import { FootballPlayer } from '../../../data/footballMasterData';
+import { DraftClub } from '../../../data/draftClubs';
 
-export type DraftPosition = 'GK' | 'DEF_1' | 'DEF_2' | 'MID' | 'FWD';
+export type DraftPosition = 'FWD' | 'MID' | 'DEF_1' | 'DEF_2' | 'GK';
 
 export const DRAFT_POSITION_NAMES: Record<DraftPosition, string> = {
-  GK: 'حارس مرمى (GK)',
+  FWD: 'مهاجم (FWD)',
+  MID: 'خط وسط (MID)',
   DEF_1: 'مدافع أول (DEF 1)',
   DEF_2: 'مدافع ثانٍ (DEF 2)',
-  MID: 'خط وسط (MID)',
-  FWD: 'مهاجم (FWD)',
+  GK: 'حارس مرمى (GK)',
 };
 
 export const DRAFT_POSITION_SHORT_NAMES: Record<DraftPosition, string> = {
-  GK: 'حارس',
+  FWD: 'مهاجم',
+  MID: 'وسط',
   DEF_1: 'مدافع 1',
   DEF_2: 'مدافع 2',
-  MID: 'وسط',
-  FWD: 'مهاجم',
+  GK: 'حارس',
 };
 
+// Formation grid order from Top (Attack) to Bottom (Goalie)
 export const DRAFT_SLOTS_ORDER: DraftPosition[] = [
-  'GK',
+  'FWD',
+  'MID',
   'DEF_1',
   'DEF_2',
-  'MID',
-  'FWD'
+  'GK',
 ];
 
 export type DraftPhase = 'LOBBY' | 'DRAFTING' | 'AI_REVEAL' | 'MATCH_OVER';
@@ -42,10 +44,13 @@ export interface DraftContestant {
   id: string;
   name: string;
   isReady?: boolean;
+  selectedClub?: DraftClub | null;
   picks: Record<DraftPosition, FootballPlayer | null>;
   // Store condition applied to each slot pick
   pickConditions?: Record<DraftPosition, DraftCondition | null>;
-  score?: number;
+  // Round scores / victories across the 5 rounds
+  totalWins?: number;
+  readyForNextRound?: boolean;
 }
 
 export interface PlayerConditionVerification {
@@ -59,6 +64,7 @@ export interface PlayerConditionVerification {
 export interface SquadAIEvaluation {
   playerId: string;
   playerName: string;
+  selectedClub?: DraftClub | null;
   validConditionsCount: number; // 0 to 5
   conditionVerifications: PlayerConditionVerification[];
   ratings: {
@@ -81,10 +87,12 @@ export interface DraftVerdictResult {
   evaluations: SquadAIEvaluation[];
   winnerId: string;
   winnerName: string;
+  winnerClub?: DraftClub | null;
   isTie: boolean;
   tiedContestantIds: string[];
   maxConditionsMet: number;
-  verdictBanner: string; // e.g. "فريق مازن حقق 5/5 شروط وفاز بالبطولة!" or "تعادل في الشروط! جاري تفعيل المقارنة التكتيكية..."
+  verdictBanner: string;
+  tieBreakAnalysis?: string;
 }
 
 export type DraftAction =
@@ -95,6 +103,8 @@ export type DraftAction =
   | 'ROUND_ADVANCE'
   | 'AI_EVALUATION_START'
   | 'AI_EVALUATION_DONE'
+  | 'PLAYER_NEXT_ROUND_READY'
+  | 'START_NEXT_ROUND'
   | 'RESET_LOBBY'
   | 'ROOM_TERMINATED';
 
@@ -102,6 +112,7 @@ export interface DraftEventPayload {
   action: DraftAction;
   phase?: DraftPhase;
   round?: number;           // 1 to 5
+  totalRounds?: number;     // 5
   activeCondition?: DraftCondition;
   turnOrder?: string[];     // Array of playerIds in order for current round
   currentPickerId?: string; // PlayerId who has the turn
@@ -116,5 +127,6 @@ export interface DraftEventPayload {
   targetPlayerId?: string;
   playerId?: string;
   playerName?: string;
+  selectedClub?: DraftClub | null;
   isReady?: boolean;
 }
