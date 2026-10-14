@@ -2,11 +2,14 @@ import { supabase } from '../lib/supabase';
 import {
   DraftContestant,
   SquadAIEvaluation,
+  SquadEvaluationResult,
   DraftVerdictResult,
   PlayerConditionVerification,
   DRAFT_SLOTS_ORDER,
   DraftPosition,
 } from '../pages/football/draft-5/types';
+
+export type { SquadEvaluationResult };
 import { DraftCondition } from '../data/draftConditions';
 import { FootballPlayer, FOOTBALL_PLAYERS_MASTER } from '../data/footballMasterData';
 import { normalizeArabicFootball } from './footballHistoryEngine';
@@ -283,14 +286,39 @@ function generateLocalThreePillarEvaluations(
 
     const tacticalSummary = `تشكيلة ${c.name} حققت ${validCondCount}/5 من شروط الجولة و ${validPosCount}/5 من المراكز السليمة. القوة التكتيكية الإجمالية وصلت إلى ${overallPercentage}%.`;
 
+    const slotsAnalysis: Record<string, {
+      playerName: string;
+      conditionTitle: string;
+      isConditionMet: boolean;
+      conditionReason: string;
+      isPositionValid: boolean;
+      positionReason: string;
+    }> = {};
+
+    DRAFT_SLOTS_ORDER.forEach((pos) => {
+      const v = verifications.find((item) => item.position === pos);
+      if (v) {
+        slotsAnalysis[pos] = {
+          playerName: v.playerName,
+          conditionTitle: v.conditionTitle,
+          isConditionMet: v.isValid,
+          conditionReason: v.reason,
+          isPositionValid: Boolean(v.isPositionValid),
+          positionReason: v.positionReason || '',
+        };
+      }
+    });
+
     return {
       playerId: c.id,
       playerName: c.name,
       selectedClub: c.selectedClub,
+      teamLogo: c.selectedClub?.badgeUrl || '',
       validConditionsCount: validCondCount,
       validPositionsCount: validPosCount,
       totalValidCount: validCondCount + validPosCount,
       conditionVerifications: verifications,
+      slotsAnalysis,
       ratings: {
         gk: gkScore,
         defense: defScore,
@@ -300,6 +328,7 @@ function generateLocalThreePillarEvaluations(
       },
       overallPercentage,
       critiqueTitle,
+      critiqueSummary: tacticalSummary,
       detailedBreakdown: {
         strengths: strengths.slice(0, 3),
         weaknesses: weaknesses.slice(0, 2),

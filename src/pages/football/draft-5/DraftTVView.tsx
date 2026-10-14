@@ -20,6 +20,7 @@ import {
 import { FootballPlayer } from '../../../data/footballMasterData';
 import { evaluateDraftSquadsWithAI } from '../../../utils/aiTacticalJudge';
 import { DraftTopBar } from './components/DraftTopBar';
+import { DraftTVPitch, TVSlotItem } from './components/DraftTVPitch';
 import { supabase } from '../../../lib/supabase';
 import { sound } from '../../../lib/audio';
 import {
@@ -50,13 +51,70 @@ export const DraftTVView: FC = () => {
 
   // Participants & Secret Picks
   const [contestants, setContestants] = useState<DraftContestant[]>([]);
-  const [allSquads, setAllSquads] = useState<Record<string, PlayerSquad>>({});
+  const [allSquads, setAllSquads] = useState<Record<string, PlayerSquad>>(() => {
+    try {
+      const cached = sessionStorage.getItem(`draft_squads_${roomCode}`);
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return {};
+  });
   const persistentSquadsRef = useRef<Record<string, PlayerSquad>>({});
   const allSquadsRef = useRef<Record<string, PlayerSquad>>({});
   useEffect(() => {
     allSquadsRef.current = allSquads;
     persistentSquadsRef.current = { ...persistentSquadsRef.current, ...allSquads };
   }, [allSquads]);
+
+  // Dual-Storage Squad Persistence helper
+  const saveSquadPick = useCallback((playerId: string, payload: any) => {
+    if (!playerId) return;
+    setAllSquads((prev) => {
+      const existing = prev[playerId] || {
+        playerId,
+        playerName: payload.playerName || 'متسابق',
+        teamLogo: payload.teamLogo || payload.selectedClub?.badgeUrl || '',
+        selectedClub: payload.selectedClub || null,
+        slots: {},
+      };
+      const slotKey = (payload.slotKey || payload.pickedPosition) as DraftPosition;
+      const pickedName = payload.pickedPlayerName || payload.player?.name || payload.pickedPlayer?.name || 'لاعب';
+      const pickedPhoto = payload.player?.photo || payload.pickedPlayer?.photo || '';
+      const cId = payload.conditionId || payload.player?.conditionId || '';
+      const cTitle = payload.conditionTitle || payload.player?.conditionTitle || '';
+      const cPrompt = payload.conditionPrompt || payload.player?.conditionPrompt || '';
+
+      const updated = {
+        ...prev,
+        [playerId]: {
+          ...existing,
+          playerName: payload.playerName || existing.playerName,
+          teamLogo: payload.teamLogo || existing.teamLogo,
+          selectedClub: payload.selectedClub || existing.selectedClub,
+          slots: {
+            ...existing.slots,
+            [slotKey]: {
+              playerName: pickedName,
+              playerPhoto: pickedPhoto,
+              conditionId: cId,
+              conditionTitle: cTitle,
+              conditionPrompt: cPrompt,
+            },
+          },
+        },
+      };
+
+      allSquadsRef.current = updated;
+      persistentSquadsRef.current = { ...persistentSquadsRef.current, ...updated };
+
+      try {
+        sessionStorage.setItem(`draft_squads_${roomCode}`, JSON.stringify(updated));
+      } catch (err) {
+        console.warn('Failed to persist squad to sessionStorage:', err);
+      }
+
+      return updated;
+    });
+  }, [roomCode]);
   const [usedConditions, setUsedConditions] = useState<DraftCondition[]>([]);
   const [draftedPlayerIds, setDraftedPlayerIds] = useState<string[]>([]);
 
@@ -291,16 +349,43 @@ export const DraftTVView: FC = () => {
     setPhase('AI_REVEAL');
     setIsEvaluating(true);
 
-    // Broadcast DRAFT_FINISHED so all mobile clients push their latest full squads immediately
+    // Broadcast DRAFT_FINISHED and FORCE_PUSH_SQUADS so all mobile clients push their latest full squads immediately
     broadcastEvent({ action: 'DRAFT_FINISHED' });
+    broadcastEvent({ action: 'FORCE_PUSH_SQUADS' });
     broadcastEvent({ action: 'AI_EVALUATION_START' });
 
     // Execute Two-Tier Adjudication after a brief timeout (allowing mobile PUSH_FINAL_SQUAD packets to arrive)
     setTimeout(() => {
-      const currentPersisted = { ...persistentSquadsRef.current, ...allSquadsRef.current };
-      const latestContestants = contestantsRef.current.length > 0 ? contestantsRef.current : updatedContestants;
+      let storedSquads: Record<string, any> = {};
+      try {
+        const raw = sessionStorage.getItem(`draft_squads_${roomCode}`);
+        if (raw) storedSquads = JSON.parse(raw);
+      } catch (err) {
+        console.warn('Failed to parse cached draft squads:', err);
+      }
 
-      const mergedContestants: DraftContestant[] = latestContestants.map((c) => {
+      const currentPersisted = { ...storedSquads, ...persistentSquadsRef.current, ...allSquadsRef.current };
+      const latestContestants = contestantsRef.current.length > 0 ? contestantsRef.current : updatedContestants;
+      const contestantIds = new Set(latestContestants.map((c) => c.id));
+      const allPool = [...latestContestants];
+
+      // Zero-Loss: If any contestant submitted squads but dropped from presence, revive them
+      Object.entries(currentPersisted).forEach(([pId, sq]: [string, any]) => {
+        if (!contestantIds.has(pId) && sq) {
+          allPool.push({
+            id: pId,
+            name: sq.playerName || 'متسابق',
+            selectedClub: sq.selectedClub || (sq.teamLogo ? { id: 'c', name: 'النادي', league: '', country: '', badgeUrl: sq.teamLogo } : null),
+            isReady: true,
+            picks: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
+            pickConditions: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
+            readyForNextRound: false,
+          });
+          contestantIds.add(pId);
+        }
+      });
+
+      const mergedContestants: DraftContestant[] = allPool.map((c) => {
         const sq = currentPersisted[c.id];
         const mergedPicks = { ...c.picks };
         const mergedConds = { ...(c.pickConditions || { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null }) };
@@ -359,7 +444,7 @@ export const DraftTVView: FC = () => {
         });
       });
     }, 700);
-  }, [broadcastEvent]);
+  }, [broadcastEvent, roomCode]);
 
   // Handle Pick Locked from contestant into their chosen position
   const handleContestantPick = useCallback((
@@ -371,6 +456,15 @@ export const DraftTVView: FC = () => {
     // 1. Lock player globally in anti-steal list
     const updatedDrafted = [...draftedPlayerIdsRef.current, player.id];
     setDraftedPlayerIds(updatedDrafted);
+
+    // Save pick to dual-storage persistence
+    saveSquadPick(pickerId, {
+      slotKey: position,
+      pickedPlayerName: player.name,
+      player,
+      conditionTitle: appliedCondition?.title || activeConditionRef.current?.title,
+      conditionId: appliedCondition?.id || activeConditionRef.current?.id,
+    });
 
     // 2. Update contestant picks and associate condition
     const updatedContestants = contestantsRef.current.map((c) => {
@@ -393,7 +487,7 @@ export const DraftTVView: FC = () => {
 
     // 3. Advance to next turn or finish round
     handleAdvanceTurn(updatedContestants, updatedDrafted);
-  }, [handleAdvanceTurn]);
+  }, [handleAdvanceTurn, saveSquadPick]);
 
   // Start Next Round (Round N+1 of 5)
   const handleAdvanceToNextRound = useCallback(() => {
@@ -522,37 +616,14 @@ export const DraftTVView: FC = () => {
         const pId = ev.playerId;
         const sKey = ev.slotKey;
         if (pId && sKey) {
+          saveSquadPick(pId, ev);
+
           const playerObj = ev.player || {
             name: ev.pickedPlayerName || 'لاعب',
             photo: '',
             conditionTitle: ev.conditionTitle || '',
             conditionPrompt: '',
           };
-
-          setAllSquads((prev) => {
-            const current = prev[pId] || {
-              playerId: pId,
-              playerName: ev.playerName || '',
-              teamLogo: ev.teamLogo,
-              selectedClub: ev.selectedClub,
-              slots: {},
-            };
-            return {
-              ...prev,
-              [pId]: {
-                ...current,
-                slots: {
-                  ...current.slots,
-                  [sKey]: {
-                    playerName: playerObj.name,
-                    playerPhoto: playerObj.photo,
-                    conditionTitle: playerObj.conditionTitle,
-                    conditionPrompt: playerObj.conditionPrompt,
-                  },
-                },
-              },
-            };
-          });
 
           // Also update contestant picks directly
           setContestants((prev) =>
@@ -615,37 +686,8 @@ export const DraftTVView: FC = () => {
           showToast(`قام ${picker} باختيار ${targetName}!`);
         }
       } else if (ev.action === 'PLAYER_PICKED' || ev.action === 'PICK_LOCKED') {
-        if (ev.playerId && ev.slotKey && ev.pickedPlayerName) {
-          const pId = ev.playerId;
-          const sKey = ev.slotKey;
-          const pName = ev.pickedPlayerName;
-          const cId = ev.conditionId || '';
-          const cTitle = ev.conditionTitle || '';
-          setAllSquads((prev) => {
-            const current = prev[pId] || {
-              playerId: pId,
-              playerName: ev.playerName || '',
-              teamLogo: ev.teamLogo,
-              selectedClub: ev.selectedClub,
-              slots: {},
-            };
-            return {
-              ...prev,
-              [pId]: {
-                ...current,
-                teamLogo: ev.teamLogo || current.teamLogo,
-                selectedClub: ev.selectedClub || current.selectedClub,
-                slots: {
-                  ...current.slots,
-                  [sKey]: {
-                    playerName: pName,
-                    conditionId: cId,
-                    conditionTitle: cTitle,
-                  },
-                },
-              },
-            };
-          });
+        if (ev.playerId && (ev.slotKey || ev.pickedPosition)) {
+          saveSquadPick(ev.playerId, ev);
         }
         if (ev.playerId && ev.pickedPosition && ev.pickedPlayer) {
           handleContestantPick(ev.playerId, ev.pickedPosition, ev.pickedPlayer, ev.appliedCondition);
@@ -654,10 +696,16 @@ export const DraftTVView: FC = () => {
         const pId = ev.playerId;
         const incomingSquad = ev.squad;
         persistentSquadsRef.current[pId] = incomingSquad;
-        setAllSquads((prev) => ({
-          ...prev,
-          [pId]: incomingSquad,
-        }));
+        setAllSquads((prev) => {
+          const updated = {
+            ...prev,
+            [pId]: incomingSquad,
+          };
+          try {
+            sessionStorage.setItem(`draft_squads_${roomCode}`, JSON.stringify(updated));
+          } catch (e) {}
+          return updated;
+        });
         // Also update contestant picks directly
         setContestants((prev) =>
           prev.map((c) => {
@@ -732,7 +780,97 @@ export const DraftTVView: FC = () => {
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [roomCode, handleContestantPick]);
+  }, [roomCode, handleContestantPick, saveSquadPick]);
+
+  // Auto-evaluation fallback if TV is on AI_REVEAL but verdictResult is null and not evaluating
+  useEffect(() => {
+    if (phase === 'AI_REVEAL' && !verdictResult && !isEvaluating) {
+      let storedSquads: Record<string, any> = {};
+      try {
+        const raw = sessionStorage.getItem(`draft_squads_${roomCode}`);
+        if (raw) storedSquads = JSON.parse(raw);
+      } catch (e) {}
+
+      const combinedSquads = { ...storedSquads, ...persistentSquadsRef.current, ...allSquadsRef.current };
+      const currentList = contestantsRef.current.length > 0 ? contestantsRef.current : contestants;
+      const contestantIds = new Set(currentList.map((c) => c.id));
+      const pool = [...currentList];
+
+      Object.entries(combinedSquads).forEach(([pId, sq]: [string, any]) => {
+        if (!contestantIds.has(pId) && sq) {
+          pool.push({
+            id: pId,
+            name: sq.playerName || 'متسابق',
+            selectedClub: sq.selectedClub || (sq.teamLogo ? { id: 'c', name: 'النادي', league: '', country: '', badgeUrl: sq.teamLogo } : null),
+            isReady: true,
+            picks: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
+            pickConditions: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
+            readyForNextRound: false,
+          });
+          contestantIds.add(pId);
+        }
+      });
+
+      if (pool.length > 0) {
+        setIsEvaluating(true);
+        const mergedContestants: DraftContestant[] = pool.map((c) => {
+          const sq = combinedSquads[c.id];
+          const mergedPicks = { ...c.picks };
+          const mergedConds = { ...(c.pickConditions || { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null }) };
+
+          if (sq && sq.slots) {
+            (Object.keys(sq.slots) as DraftPosition[]).forEach((pos) => {
+              const slot = sq.slots[pos];
+              if (slot && !mergedPicks[pos]) {
+                mergedPicks[pos] = {
+                  id: 'synced_' + pos + '_' + c.id,
+                  name: slot.playerName,
+                  aliases: [slot.playerName],
+                  nationality: 'غير محدد',
+                  nationalityCode: 'UN',
+                  clubs: [],
+                  currentClub: 'مخصص',
+                  position: pos === 'GK' ? 'GK' : pos === 'MID' ? 'MID' : pos === 'FWD' ? 'FWD' : 'DEF',
+                  traits: [],
+                  trophies: [],
+                };
+                if (!mergedConds[pos]) {
+                  mergedConds[pos] = {
+                    id: slot.conditionId || 'c_general',
+                    title: slot.conditionTitle || 'شرط معتمد',
+                    rulePrompt: slot.conditionTitle || 'شرط معتمد',
+                  };
+                }
+              }
+            });
+          }
+
+          return {
+            ...c,
+            selectedClub: c.selectedClub || sq?.selectedClub || null,
+            picks: mergedPicks,
+            pickConditions: mergedConds,
+          };
+        });
+
+        evaluateDraftSquadsWithAI(mergedContestants, usedConditionsRef.current).then((result) => {
+          setVerdictResult(result);
+          setIsEvaluating(false);
+          if (result.winnerId) {
+            setRoundWins((prev) => ({
+              ...prev,
+              [result.winnerId]: (prev[result.winnerId] || 0) + 1,
+            }));
+          }
+          broadcastEvent({
+            action: 'AI_EVALUATION_DONE',
+            evaluations: result.evaluations,
+            verdictResult: result,
+          });
+        });
+      }
+    }
+  }, [phase, verdictResult, isEvaluating, roomCode, broadcastEvent, contestants]);
 
   const joinUrl = `${window.location.origin}/room/${roomCode}/football/draft-5`;
   const currentPickerId = turnOrder[currentTurnIndex];
@@ -961,7 +1099,7 @@ export const DraftTVView: FC = () => {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xl font-black text-[#2C2A29] flex items-center gap-2">
                   <Users size={22} className="text-[#8A9A5B]" />
-                  <span>تشكيلات المتسابقين المباشرة (Multi-Pitch Live Grid):</span>
+                  <span>تشكيلات المتسابقين الميدانية المباشرة (Live Tactical Pitches):</span>
                 </h3>
                 <span className="text-xs font-black bg-[#8A9A5B] text-white px-3 py-1 rounded-full border border-[#2C2A29] shadow-sm">
                   بث مباشر لحظي ⚡
@@ -972,93 +1110,46 @@ export const DraftTVView: FC = () => {
                 {contestants.map((c) => {
                   const isCurrent = c.id === currentPickerId;
                   const squad = allSquads[c.id];
-                  const totalPicked = Object.values(c.picks).filter(Boolean).length;
+
+                  // Construct slot data for DraftTVPitch
+                  const pitchSlots: Partial<Record<DraftPosition, TVSlotItem | null>> = {
+                    FWD: {
+                      playerName: c.picks.FWD?.name || squad?.slots?.FWD?.playerName || '',
+                      playerPhoto: c.picks.FWD?.photo || squad?.slots?.FWD?.playerPhoto,
+                      conditionTitle: squad?.slots?.FWD?.conditionTitle || c.pickConditions?.FWD?.title,
+                    },
+                    MID: {
+                      playerName: c.picks.MID?.name || squad?.slots?.MID?.playerName || '',
+                      playerPhoto: c.picks.MID?.photo || squad?.slots?.MID?.playerPhoto,
+                      conditionTitle: squad?.slots?.MID?.conditionTitle || c.pickConditions?.MID?.title,
+                    },
+                    DEF_1: {
+                      playerName: c.picks.DEF_1?.name || squad?.slots?.DEF_1?.playerName || '',
+                      playerPhoto: c.picks.DEF_1?.photo || squad?.slots?.DEF_1?.playerPhoto,
+                      conditionTitle: squad?.slots?.DEF_1?.conditionTitle || c.pickConditions?.DEF_1?.title,
+                    },
+                    DEF_2: {
+                      playerName: c.picks.DEF_2?.name || squad?.slots?.DEF_2?.playerName || '',
+                      playerPhoto: c.picks.DEF_2?.photo || squad?.slots?.DEF_2?.playerPhoto,
+                      conditionTitle: squad?.slots?.DEF_2?.conditionTitle || c.pickConditions?.DEF_2?.title,
+                    },
+                    GK: {
+                      playerName: c.picks.GK?.name || squad?.slots?.GK?.playerName || '',
+                      playerPhoto: c.picks.GK?.photo || squad?.slots?.GK?.playerPhoto,
+                      conditionTitle: squad?.slots?.GK?.conditionTitle || c.pickConditions?.GK?.title,
+                    },
+                  };
 
                   return (
-                    <div
+                    <DraftTVPitch
                       key={c.id}
-                      className={`bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] rounded-2xl p-4 flex flex-col justify-between transition-all ${
-                        isCurrent ? 'ring-4 ring-[#8A9A5B]' : ''
-                      }`}
-                    >
-                      {/* Header: Contestant Name + Club Logo Badge */}
-                      <div className="flex items-center justify-between pb-3 border-b-2 border-[#2C2A29] mb-3">
-                        <div className="flex items-center gap-2.5">
-                          {c.selectedClub && (
-                            <img src={c.selectedClub.badgeUrl} alt="" className="w-8 h-8 object-contain shrink-0" />
-                          )}
-                          <div>
-                            <h4 className="font-black text-base text-[#2C2A29] leading-tight">
-                              {c.name}
-                            </h4>
-                            <span className="text-[10px] font-bold text-[#5C4033] block">
-                              {c.selectedClub?.name || 'فريق الأحلام'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-black bg-[#E5E0D5] text-[#2C2A29] px-2.5 py-1 rounded-xl border border-[#2C2A29]">
-                            {totalPicked}/5
-                          </span>
-                          {isCurrent && (
-                            <span className="bg-[#8A9A5B] text-white text-[11px] font-black px-2.5 py-1 rounded-xl border border-[#2C2A29]">
-                              دوره الآن 🎯
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* The 5 Formation Slots */}
-                      <div className="space-y-2">
-                        {DRAFT_SLOTS_ORDER.map((pos) => {
-                          const pickPlayer = c.picks[pos];
-                          const slotData = squad?.slots?.[pos];
-                          const pName = pickPlayer?.name || slotData?.playerName;
-                          const pPhoto = pickPlayer?.photo || slotData?.playerPhoto;
-                          const condTitle = slotData?.conditionTitle || c.pickConditions?.[pos]?.title;
-                          const isFilled = Boolean(pName);
-                          const posLabel = DRAFT_POSITION_SHORT_NAMES[pos];
-
-                          return (
-                            <div key={pos} className="w-full">
-                              {isFilled ? (
-                                <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] p-2.5 rounded-xl flex items-center justify-between gap-2 shadow-sm">
-                                  <div className="flex items-center gap-2.5 min-w-0">
-                                    <div className="w-9 h-9 rounded-lg bg-white border border-[#2C2A29] flex items-center justify-center overflow-hidden shrink-0">
-                                      {pPhoto ? (
-                                        <img src={pPhoto} alt="" className="w-full h-full object-cover" />
-                                      ) : (
-                                        <span className="text-xs font-black text-[#5C4033]">{posLabel.charAt(0)}</span>
-                                      )}
-                                    </div>
-                                    <div className="min-w-0 text-right">
-                                      <span className="text-xs sm:text-sm font-black text-[#2C2A29] block truncate">
-                                        {pName}
-                                      </span>
-                                      {condTitle && (
-                                        <span className="text-[10px] font-bold text-[#8A9A5B] block truncate">
-                                          شرط: {condTitle}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <span className="text-[11px] font-black bg-[#8A9A5B] text-white px-2.5 py-0.5 rounded-lg border border-[#2C2A29] shrink-0">
-                                    {posLabel}
-                                  </span>
-                                </div>
-                              ) : (
-                                <div className="border-2 border-dashed border-[#2C2A29]/40 bg-white/40 rounded-xl p-2.5 flex items-center justify-between text-xs text-[#5C4033]/70 font-bold">
-                                  <span className="text-[11px]">{posLabel} - فارغ</span>
-                                  <span className="text-[10px] font-mono opacity-60">[{pos}]</span>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                      contestantName={c.name}
+                      clubBadgeUrl={c.selectedClub?.badgeUrl}
+                      clubName={c.selectedClub?.name}
+                      isCurrentPicker={isCurrent}
+                      isEvaluating={false}
+                      slots={pitchSlots}
+                    />
                   );
                 })}
               </div>
@@ -1085,49 +1176,84 @@ export const DraftTVView: FC = () => {
               </div>
             ) : (
               <div className="w-full space-y-8">
-                {/* Massive Result Announcement Banner */}
-                <div className="space-y-3">
-                  <div className="inline-flex items-center gap-2 bg-[#8A9A5B] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-4 py-1.5 rounded-xl font-black text-sm">
-                    {verdictResult.isTie ? <Swords size={16} /> : <Award size={16} />}
-                    <span>{verdictResult.isTie ? 'حسم التعادل التكتيكي المباشر' : `نتيجة الجولة ${round} من ${TOTAL_ROUNDS}`}</span>
+                {/* =======================================================
+                    TIER 3: WINNER ANNOUNCEMENT BANNER + HOST CONTROLS
+                    ======================================================= */}
+                <div className="bg-[#8A9A5B] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-6 md:p-8 max-w-4xl mx-auto space-y-4 w-full">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-wider bg-[#2C2A29] text-white px-3.5 py-1.5 rounded-full">
+                      {round >= TOTAL_ROUNDS ? 'بطل الدرافت النهائي 🥇' : `بطل الجولة ${round} من ${TOTAL_ROUNDS} 🥇`}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="bg-[#2C2A29] text-white text-xs font-black px-3 py-1.5 rounded-xl border border-white/20">
+                        {rankedEvaluations[0]?.validConditionsCount || 0}/5 شروط صحيحة
+                      </span>
+                      <span className="bg-[#2C2A29] text-white text-xs font-mono font-black px-3 py-1.5 rounded-xl border border-white/20">
+                        {rankedEvaluations[0]?.overallPercentage || 0}% قوة تكتيكية
+                      </span>
+                    </div>
                   </div>
 
-                  <h2 className="text-3xl md:text-5xl font-black text-[#2C2A29] leading-tight">
-                    {verdictResult.verdictBanner}
-                  </h2>
+                  <div className="flex items-center justify-center gap-3.5 py-1">
+                    {verdictResult.winnerClub && (
+                      <div className="w-12 h-12 rounded-xl bg-white/20 border border-white/40 p-1.5 flex items-center justify-center shrink-0">
+                        <img
+                          src={verdictResult.winnerClub.badgeUrl}
+                          alt=""
+                          className="w-full h-full object-contain"
+                          referrerPolicy="no-referrer"
+                        />
+                      </div>
+                    )}
+                    <h2 className="text-3xl md:text-5xl font-black">
+                      فريق {verdictResult.winnerName}
+                    </h2>
+                  </div>
+
+                  <p className="text-sm md:text-base font-bold opacity-90 text-center max-w-2xl mx-auto">
+                    "{rankedEvaluations[0]?.critiqueSummary || rankedEvaluations[0]?.critiqueTitle}"
+                  </p>
 
                   {/* Tie-Break Detailed Line Analysis Callout */}
                   {verdictResult.tieBreakAnalysis && (
-                    <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-2xl p-4 max-w-2xl mx-auto text-sm font-bold text-[#2C2A29] shadow-sm">
-                      {verdictResult.tieBreakAnalysis}
+                    <div className="bg-[#F7F4EC] text-[#2C2A29] border-2 border-[#2C2A29] rounded-2xl p-3.5 text-xs md:text-sm font-bold shadow-sm text-center">
+                      ⚖️ {verdictResult.tieBreakAnalysis}
                     </div>
                   )}
-                </div>
 
-                {/* Champion Showcase Card */}
-                <div className="bg-[#8A9A5B] text-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-6 max-w-2xl mx-auto space-y-2">
-                  <span className="text-xs font-black uppercase tracking-wider bg-[#2C2A29] text-white px-3 py-1 rounded-full">
-                    {round >= 5 ? 'بطل الدرافت النهائي 🥇' : `بطل الجولة ${round} 🥇`}
-                  </span>
-                  <div className="flex items-center justify-center gap-3">
-                    {verdictResult.winnerClub && (
-                      <img src={verdictResult.winnerClub.badgeUrl} alt="" className="w-9 h-9 object-contain" />
+                  {/* Host Round Controls Directly Inside Tier 3 Banner */}
+                  <div className="flex items-center justify-center pt-2">
+                    {round < TOTAL_ROUNDS ? (
+                      <button
+                        onClick={handleAdvanceToNextRound}
+                        className="bg-[#C68B59] hover:bg-[#B57A48] text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none py-3 px-8 rounded-xl font-black text-base flex items-center gap-2 cursor-pointer transition-all"
+                      >
+                        <ArrowRight size={18} />
+                        <span>الانتقال للجولة {round + 1} من {TOTAL_ROUNDS}</span>
+                      </button>
+                    ) : (
+                      <div className="text-center space-y-3">
+                        <div className="bg-[#2C2A29] text-white border border-white/30 px-6 py-2.5 rounded-2xl font-black text-lg">
+                          🏆 منصة التتويج الكبرى: {grandChampionContestant?.name} توج بطلاً للدرافت!
+                        </div>
+                        <button
+                          onClick={() => {
+                            sound.playClick();
+                            setPhase('LOBBY');
+                            setRound(1);
+                            setDraftedPlayerIds([]);
+                            setVerdictResult(null);
+                            setRoundWins({});
+                            broadcastEvent({ action: 'RESET_LOBBY' });
+                          }}
+                          className="bg-[#F7F4EC] hover:bg-white text-[#2C2A29] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] py-2.5 px-6 rounded-xl font-black text-sm flex items-center gap-2 mx-auto cursor-pointer"
+                        >
+                          <RotateCcw size={16} />
+                          <span>إعادة اللعبة والعودة للوبي</span>
+                        </button>
+                      </div>
                     )}
-                    <h3 className="text-3xl font-black">
-                      فريق {verdictResult.winnerName}
-                    </h3>
                   </div>
-                  <div className="flex items-center justify-center gap-4 text-sm font-bold pt-1">
-                    <span className="bg-[#2C2A29] px-3 py-1 rounded-xl">
-                      الشروط المحققة: {rankedEvaluations[0]?.validConditionsCount || 0}/5
-                    </span>
-                    <span className="bg-[#2C2A29] px-3 py-1 rounded-xl font-mono">
-                      القوة التكتيكية: {rankedEvaluations[0]?.overallPercentage || 0}%
-                    </span>
-                  </div>
-                  <p className="text-sm font-bold opacity-90 pt-1">
-                    "{rankedEvaluations[0]?.critiqueTitle}"
-                  </p>
                 </div>
 
                 {/* Line-by-Line Showdown Section (المقارنة التكتيكية المباشرة بين الخطوط) */}
@@ -1217,7 +1343,9 @@ export const DraftTVView: FC = () => {
                   </div>
                 </div>
 
-                {/* Squads Verification Cards Side by Side with Explicit Error Breakdown */}
+                {/* =======================================================
+                    TIER 1 & TIER 2: TACTICAL PITCHES + AI BREAKDOWN CARDS
+                    ======================================================= */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full text-right">
                   {rankedEvaluations.map((ev, idx) => {
                     const contestant = contestants.find((c) => c.id === ev.playerId);
@@ -1225,186 +1353,208 @@ export const DraftTVView: FC = () => {
                     const picks = contestant?.picks;
                     const isWinner = ev.playerId === verdictResult.winnerId;
 
+                    // Build full pitch slots with stamped validation
+                    const pitchSlots: Partial<Record<DraftPosition, TVSlotItem | null>> = {
+                      FWD: {
+                        playerName: ev.slotsAnalysis?.FWD?.playerName || picks?.FWD?.name || squadBackup?.slots?.FWD?.playerName || 'فارغ',
+                        playerPhoto: picks?.FWD?.photo || squadBackup?.slots?.FWD?.playerPhoto,
+                        conditionTitle: ev.slotsAnalysis?.FWD?.conditionTitle || contestant?.pickConditions?.FWD?.title || squadBackup?.slots?.FWD?.conditionTitle,
+                        isConditionMet: ev.slotsAnalysis?.FWD?.isConditionMet ?? ev.conditionVerifications.find((v) => v.position === 'FWD')?.isValid,
+                        conditionReason: ev.slotsAnalysis?.FWD?.conditionReason || ev.conditionVerifications.find((v) => v.position === 'FWD')?.reason,
+                        isPositionValid: ev.slotsAnalysis?.FWD?.isPositionValid ?? ev.conditionVerifications.find((v) => v.position === 'FWD')?.isPositionValid,
+                        positionReason: ev.slotsAnalysis?.FWD?.positionReason || ev.conditionVerifications.find((v) => v.position === 'FWD')?.positionReason,
+                      },
+                      MID: {
+                        playerName: ev.slotsAnalysis?.MID?.playerName || picks?.MID?.name || squadBackup?.slots?.MID?.playerName || 'فارغ',
+                        playerPhoto: picks?.MID?.photo || squadBackup?.slots?.MID?.playerPhoto,
+                        conditionTitle: ev.slotsAnalysis?.MID?.conditionTitle || contestant?.pickConditions?.MID?.title || squadBackup?.slots?.MID?.conditionTitle,
+                        isConditionMet: ev.slotsAnalysis?.MID?.isConditionMet ?? ev.conditionVerifications.find((v) => v.position === 'MID')?.isValid,
+                        conditionReason: ev.slotsAnalysis?.MID?.conditionReason || ev.conditionVerifications.find((v) => v.position === 'MID')?.reason,
+                        isPositionValid: ev.slotsAnalysis?.MID?.isPositionValid ?? ev.conditionVerifications.find((v) => v.position === 'MID')?.isPositionValid,
+                        positionReason: ev.slotsAnalysis?.MID?.positionReason || ev.conditionVerifications.find((v) => v.position === 'MID')?.positionReason,
+                      },
+                      DEF_1: {
+                        playerName: ev.slotsAnalysis?.DEF_1?.playerName || picks?.DEF_1?.name || squadBackup?.slots?.DEF_1?.playerName || 'فارغ',
+                        playerPhoto: picks?.DEF_1?.photo || squadBackup?.slots?.DEF_1?.playerPhoto,
+                        conditionTitle: ev.slotsAnalysis?.DEF_1?.conditionTitle || contestant?.pickConditions?.DEF_1?.title || squadBackup?.slots?.DEF_1?.conditionTitle,
+                        isConditionMet: ev.slotsAnalysis?.DEF_1?.isConditionMet ?? ev.conditionVerifications.find((v) => v.position === 'DEF_1')?.isValid,
+                        conditionReason: ev.slotsAnalysis?.DEF_1?.conditionReason || ev.conditionVerifications.find((v) => v.position === 'DEF_1')?.reason,
+                        isPositionValid: ev.slotsAnalysis?.DEF_1?.isPositionValid ?? ev.conditionVerifications.find((v) => v.position === 'DEF_1')?.isPositionValid,
+                        positionReason: ev.slotsAnalysis?.DEF_1?.positionReason || ev.conditionVerifications.find((v) => v.position === 'DEF_1')?.positionReason,
+                      },
+                      DEF_2: {
+                        playerName: ev.slotsAnalysis?.DEF_2?.playerName || picks?.DEF_2?.name || squadBackup?.slots?.DEF_2?.playerName || 'فارغ',
+                        playerPhoto: picks?.DEF_2?.photo || squadBackup?.slots?.DEF_2?.playerPhoto,
+                        conditionTitle: ev.slotsAnalysis?.DEF_2?.conditionTitle || contestant?.pickConditions?.DEF_2?.title || squadBackup?.slots?.DEF_2?.conditionTitle,
+                        isConditionMet: ev.slotsAnalysis?.DEF_2?.isConditionMet ?? ev.conditionVerifications.find((v) => v.position === 'DEF_2')?.isValid,
+                        conditionReason: ev.slotsAnalysis?.DEF_2?.conditionReason || ev.conditionVerifications.find((v) => v.position === 'DEF_2')?.reason,
+                        isPositionValid: ev.slotsAnalysis?.DEF_2?.isPositionValid ?? ev.conditionVerifications.find((v) => v.position === 'DEF_2')?.isPositionValid,
+                        positionReason: ev.slotsAnalysis?.DEF_2?.positionReason || ev.conditionVerifications.find((v) => v.position === 'DEF_2')?.positionReason,
+                      },
+                      GK: {
+                        playerName: ev.slotsAnalysis?.GK?.playerName || picks?.GK?.name || squadBackup?.slots?.GK?.playerName || 'فارغ',
+                        playerPhoto: picks?.GK?.photo || squadBackup?.slots?.GK?.playerPhoto,
+                        conditionTitle: ev.slotsAnalysis?.GK?.conditionTitle || contestant?.pickConditions?.GK?.title || squadBackup?.slots?.GK?.conditionTitle,
+                        isConditionMet: ev.slotsAnalysis?.GK?.isConditionMet ?? ev.conditionVerifications.find((v) => v.position === 'GK')?.isValid,
+                        conditionReason: ev.slotsAnalysis?.GK?.conditionReason || ev.conditionVerifications.find((v) => v.position === 'GK')?.reason,
+                        isPositionValid: ev.slotsAnalysis?.GK?.isPositionValid ?? ev.conditionVerifications.find((v) => v.position === 'GK')?.isPositionValid,
+                        positionReason: ev.slotsAnalysis?.GK?.positionReason || ev.conditionVerifications.find((v) => v.position === 'GK')?.positionReason,
+                      },
+                    };
+
                     return (
-                      <div
-                        key={ev.playerId}
-                        className={`border-3 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] rounded-2xl p-5 space-y-4 flex flex-col justify-between ${
-                          isWinner ? 'bg-[#F7F4EC] ring-4 ring-[#8A9A5B]' : 'bg-[#F7F4EC]'
-                        }`}
-                      >
-                        <div>
-                          {/* Card Header: Name + Club Badge + Conditions Met */}
-                          <div className="flex items-center justify-between pb-3 border-b-2 border-[#2C2A29]">
-                            <div className="flex items-center gap-2">
-                              {ev.selectedClub && (
-                                <img src={ev.selectedClub.badgeUrl} alt="" className="w-8 h-8 object-contain shrink-0" />
-                              )}
-                              <div>
-                                <span className="text-xs font-black text-[#8A9A5B]">
-                                  المركز #{idx + 1}
+                      <div key={ev.playerId} className="flex flex-col space-y-4">
+                        {/* Tier 1: Tactical Pitch Showcase */}
+                        <DraftTVPitch
+                          contestantName={ev.playerName}
+                          clubBadgeUrl={ev.selectedClub?.badgeUrl}
+                          clubName={ev.selectedClub?.name}
+                          isEvaluating={true}
+                          slots={pitchSlots}
+                          validConditionsCount={ev.validConditionsCount}
+                          overallPercentage={ev.overallPercentage}
+                          rankBadge={`المركز #${idx + 1}`}
+                        />
+
+                        {/* Tier 2: AI Analytical Breakdown Card Below the Pitch */}
+                        <div
+                          className={`bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] rounded-2xl p-4 space-y-3.5 flex flex-col justify-between flex-1 ${
+                            isWinner ? 'ring-2 ring-[#8A9A5B]' : ''
+                          }`}
+                        >
+                          <div>
+                            {/* Header */}
+                            <div className="flex items-center justify-between pb-2.5 border-b-2 border-[#2C2A29]">
+                              <div className="flex items-center gap-2">
+                                {ev.selectedClub && (
+                                  <img src={ev.selectedClub.badgeUrl} alt="" className="w-7 h-7 object-contain shrink-0" />
+                                )}
+                                <div>
+                                  <h4 className="text-base font-black text-[#2C2A29] leading-tight">
+                                    {ev.playerName}
+                                  </h4>
+                                  <span className="text-[10px] font-bold text-[#8A9A5B]">
+                                    {ev.selectedClub?.name || 'فريق الأحلام'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-black bg-[#8A9A5B] text-white px-2.5 py-0.5 rounded-lg border border-[#2C2A29]">
+                                  {ev.validConditionsCount}/5 شروط
                                 </span>
-                                <h4 className="text-lg font-black text-[#2C2A29] leading-tight">
-                                  {ev.playerName}
-                                </h4>
+                                <span className="text-xs font-mono font-black bg-[#2C2A29] text-white px-2 py-0.5 rounded-lg">
+                                  {ev.overallPercentage}%
+                                </span>
                               </div>
                             </div>
-                            <div className="flex flex-col items-end">
-                              <span className="text-xs font-black bg-[#8A9A5B] text-white px-2.5 py-1 rounded-xl border border-[#2C2A29]">
-                                {ev.validConditionsCount}/5 شروط
+
+                            {/* Slot-by-Slot Analytical Error & Validation Notes */}
+                            <div className="space-y-2 my-2.5">
+                              <span className="text-[10px] font-black uppercase text-[#5C4033] block">
+                                فحص مطابقة الشروط والمراكز:
                               </span>
-                              <span className="text-[11px] font-mono font-black text-[#5C4033] mt-0.5">
-                                {ev.overallPercentage}% قوة
-                              </span>
-                            </div>
-                          </div>
+                              {DRAFT_SLOTS_ORDER.map((pos) => {
+                                const sl = pitchSlots[pos];
+                                const isValid = sl?.isConditionMet ?? true;
+                                const isPosValid = sl?.isPositionValid ?? true;
+                                const posName = DRAFT_POSITION_SHORT_NAMES[pos];
 
-                          {/* 5 Players Verification List with Explicit Condition & Position Badges */}
-                          <div className="space-y-2.5 my-3">
-                            <span className="text-[10px] font-black uppercase text-[#5C4033] block">
-                              فحص مطابقة الشروط والمراكز:
-                            </span>
-                            {DRAFT_SLOTS_ORDER.map((pos) => {
-                              const p = picks ? picks[pos] : null;
-                              const ver = ev.conditionVerifications.find((v) => v.position === pos);
-                              const isValid = ver?.isValid ?? false;
-                              const isPosValid = ver?.isPositionValid ?? true;
-                              const playerName = p?.name || squadBackup?.slots?.[pos]?.playerName || ver?.playerName || 'لم يحدد';
-                              const condTitle = ver?.conditionTitle || squadBackup?.slots?.[pos]?.conditionTitle || contestant?.pickConditions?.[pos]?.title || 'شرط الجولة';
-                              const reasonText = ver?.reason || (isValid ? 'حقق الشرط المطلوب بنجاح.' : 'لم يتم استيفاء معايير الشرط.');
-                              const posReasonText = ver?.positionReason || (isPosValid ? 'المركز سليم وتمركز تكتيكي مناسب.' : 'المركز غير مطابق!');
-
-                              return (
-                                <div
-                                  key={pos}
-                                  className="bg-[#E5E0D5] border-2 border-[#2C2A29] p-2.5 rounded-xl mb-2 text-right shadow-sm space-y-1.5"
-                                >
-                                  {/* Slot Position Name and Two Badges */}
-                                  <div className="flex items-center justify-between">
-                                    <span className="font-black text-xs text-[#2C2A29]">
-                                      {DRAFT_POSITION_SHORT_NAMES[pos]}
-                                    </span>
-                                    <div className="flex items-center gap-1.5">
-                                      {/* Condition Badge */}
-                                      <span
-                                        className={`text-[11px] font-black px-2 py-0.5 rounded border border-[#2C2A29] ${
-                                          isValid ? 'bg-[#8A9A5B] text-white' : 'bg-[#C68B59] text-white'
-                                        }`}
-                                      >
-                                        {isValid ? '✓ الشرط محقق' : '✗ الشرط غير محقق'}
-                                      </span>
-                                      {/* Position Badge */}
-                                      <span
-                                        className={`text-[11px] font-black px-2 py-0.5 rounded border border-[#2C2A29] ${
-                                          isPosValid ? 'bg-[#8A9A5B] text-white' : 'bg-[#C68B59] text-white'
-                                        }`}
-                                      >
-                                        {isPosValid ? '✓ المركز سليم' : '✗ المركز خاطئ'}
-                                      </span>
+                                return (
+                                  <div
+                                    key={pos}
+                                    className="bg-[#E5E0D5] border border-[#2C2A29] p-2 rounded-xl text-xs space-y-1"
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="font-black text-[#2C2A29]">{posName}:</span>
+                                        <span className="font-bold text-[#2C2A29]">{sl?.playerName}</span>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <span
+                                          className={`text-[9px] font-black px-1.5 py-0.5 rounded border border-[#2C2A29] ${
+                                            isValid ? 'bg-[#8A9A5B] text-white' : 'bg-[#C68B59] text-white'
+                                          }`}
+                                        >
+                                          {isValid ? '✓ شرط سليم' : '✗ شرط غير محقق'}
+                                        </span>
+                                        {!isPosValid && (
+                                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded border border-[#2C2A29] bg-[#B85C5C] text-white">
+                                            ✗ مركز خاطئ
+                                          </span>
+                                        )}
+                                      </div>
                                     </div>
-                                  </div>
 
-                                  <div className="font-black text-sm text-[#2C2A29]">
-                                    {playerName}
-                                  </div>
+                                    {sl?.conditionTitle && (
+                                      <div className="text-[10px] font-bold text-[#2C2A29]/70">
+                                        الشرط: {sl.conditionTitle}
+                                      </div>
+                                    )}
 
-                                  <div className="text-[11px] font-bold text-[#2C2A29]/80">
-                                    الشرط المطلوب: {condTitle}
-                                  </div>
+                                    {sl?.conditionReason && (
+                                      <div className="text-[10px] font-bold text-[#2C2A29] bg-[#F7F4EC] p-1 rounded border border-[#2C2A29]/20">
+                                        {sl.conditionReason}
+                                      </div>
+                                    )}
 
-                                  {/* Analytical Notes */}
-                                  <div className="space-y-1 pt-1">
-                                    <div className="text-[11px] font-bold text-[#2C2A29] bg-[#F7F4EC] p-1.5 rounded border border-[#2C2A29]/30">
-                                      {reasonText}
-                                    </div>
-                                    {!isPosValid && (
-                                      <div className="text-[11px] font-bold text-[#2C2A29] bg-[#F7F4EC] p-1.5 rounded border border-[#C68B59]">
-                                        {posReasonText}
+                                    {!isPosValid && sl?.positionReason && (
+                                      <div className="text-[10px] font-bold text-[#2C2A29] bg-[#F7F4EC] p-1 rounded border border-[#B85C5C]">
+                                        {sl.positionReason}
                                       </div>
                                     )}
                                   </div>
-                                </div>
-                              );
-                            })}
+                                );
+                              })}
+                            </div>
+
+                            {/* Line Ratings */}
+                            <div className="grid grid-cols-5 gap-1 text-center py-1.5 bg-[#E5E0D5] rounded-xl border border-[#2C2A29]">
+                              <div>
+                                <span className="text-[8px] font-bold block text-[#5C4033]">حراسة</span>
+                                <span className="text-xs font-black">{ev.ratings.gk}%</span>
+                              </div>
+                              <div>
+                                <span className="text-[8px] font-bold block text-[#5C4033]">دفاع</span>
+                                <span className="text-xs font-black">{ev.ratings.defense}%</span>
+                              </div>
+                              <div>
+                                <span className="text-[8px] font-bold block text-[#5C4033]">وسط</span>
+                                <span className="text-xs font-black">{ev.ratings.midfield}%</span>
+                              </div>
+                              <div>
+                                <span className="text-[8px] font-bold block text-[#5C4033]">هجوم</span>
+                                <span className="text-xs font-black">{ev.ratings.attack}%</span>
+                              </div>
+                              <div>
+                                <span className="text-[8px] font-bold block text-[#5C4033]">انسجام</span>
+                                <span className="text-xs font-black">{ev.ratings.synergy}%</span>
+                              </div>
+                            </div>
+
+                            {/* Tactical Commentary */}
+                            <p className="text-xs font-bold text-[#5C4033] mt-2 leading-relaxed">
+                              {ev.detailedBreakdown?.tacticalSummary || ev.critiqueSummary}
+                            </p>
                           </div>
 
-                          {/* Tactical Line Ratings (Head-to-Head Line Comparison) */}
-                          <div className="grid grid-cols-5 gap-1 text-center py-2 bg-[#E5E0D5] rounded-xl border border-[#2C2A29]">
-                            <div>
-                              <span className="text-[9px] font-bold block text-[#5C4033]">حراسة</span>
-                              <span className="text-xs font-black">{ev.ratings.gk}%</span>
+                          {/* Strengths Pills */}
+                          {ev.detailedBreakdown?.strengths && ev.detailedBreakdown.strengths.length > 0 && (
+                            <div className="flex flex-wrap gap-1 pt-2 border-t border-[#E5E0D5]">
+                              {ev.detailedBreakdown.strengths.map((str, sIdx) => (
+                                <span
+                                  key={sIdx}
+                                  className="text-[9px] font-black bg-[#8A9A5B] text-white px-1.5 py-0.5 rounded-md"
+                                >
+                                  ✓ {str}
+                                </span>
+                              ))}
                             </div>
-                            <div>
-                              <span className="text-[9px] font-bold block text-[#5C4033]">دفاع</span>
-                              <span className="text-xs font-black">{ev.ratings.defense}%</span>
-                            </div>
-                            <div>
-                              <span className="text-[9px] font-bold block text-[#5C4033]">وسط</span>
-                              <span className="text-xs font-black">{ev.ratings.midfield}%</span>
-                            </div>
-                            <div>
-                              <span className="text-[9px] font-bold block text-[#5C4033]">هجوم</span>
-                              <span className="text-xs font-black">{ev.ratings.attack}%</span>
-                            </div>
-                            <div>
-                              <span className="text-[9px] font-bold block text-[#5C4033]">انسجام</span>
-                              <span className="text-xs font-black">{ev.ratings.synergy}%</span>
-                            </div>
-                          </div>
-
-                          {/* Tactical Commentary */}
-                          <p className="text-xs font-bold text-[#5C4033] mt-3 leading-relaxed">
-                            {ev.detailedBreakdown.tacticalSummary}
-                          </p>
-                        </div>
-
-                        {/* Strengths Tags */}
-                        <div className="flex flex-wrap gap-1 pt-2 border-t border-[#E5E0D5]">
-                          {ev.detailedBreakdown.strengths.map((str, sIdx) => (
-                            <span
-                              key={sIdx}
-                              className="text-[10px] font-black bg-[#8A9A5B] text-white px-2 py-0.5 rounded-md"
-                            >
-                              ✓ {str}
-                            </span>
-                          ))}
+                          )}
                         </div>
                       </div>
                     );
                   })}
-                </div>
-
-                {/* Round Controls */}
-                <div className="flex items-center justify-center gap-4 pt-4">
-                  {round < TOTAL_ROUNDS ? (
-                    <button
-                      onClick={handleAdvanceToNextRound}
-                      className="bg-[#C68B59] hover:bg-[#B57A48] text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none py-3.5 px-8 rounded-xl font-black text-base flex items-center gap-2 cursor-pointer transition-all"
-                    >
-                      <ArrowRight size={18} />
-                      <span>بدء الجولة التالية ({round + 1} من {TOTAL_ROUNDS})</span>
-                    </button>
-                  ) : (
-                    <div className="text-center space-y-3">
-                      <div className="bg-[#8A9A5B] text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] px-6 py-3 rounded-2xl font-black text-xl">
-                        🏆 منصة التتويج الكبرى: {grandChampionContestant?.name} توج بطلاً للدرافت!
-                      </div>
-                      <button
-                        onClick={() => {
-                          sound.playClick();
-                          setPhase('LOBBY');
-                          setRound(1);
-                          setDraftedPlayerIds([]);
-                          setVerdictResult(null);
-                          setRoundWins({});
-                          broadcastEvent({ action: 'RESET_LOBBY' });
-                        }}
-                        className="bg-[#F7F4EC] hover:bg-white text-[#2C2A29] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] py-3 px-6 rounded-xl font-black text-sm flex items-center gap-2 mx-auto cursor-pointer"
-                      >
-                        <RotateCcw size={16} />
-                        <span>إعادة اللعبة والعودة للوبي</span>
-                      </button>
-                    </div>
-                  )}
                 </div>
               </div>
             )}

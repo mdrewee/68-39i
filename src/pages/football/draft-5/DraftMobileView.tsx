@@ -500,8 +500,8 @@ export const DraftMobileView: FC = () => {
               showToast(`قام ${picker} باختيار ${targetName}!`);
             }
           }
-        } else if (ev.action === 'DRAFT_FINISHED') {
-          // TV broadcasted that drafting is completed: push final completed squad immediately
+        } else if (ev.action === 'DRAFT_FINISHED' || ev.action === 'FORCE_PUSH_SQUADS') {
+          // TV broadcasted that drafting is completed or sync requested: push final completed squad immediately
           const currentPicks = myPicksRef.current;
           const currentConds = myConditionsRef.current;
           const squadSlots: PlayerSquad['slots'] = {};

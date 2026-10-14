@@ -97,14 +97,41 @@ export interface PlayerConditionVerification {
   naturalPosition?: string;
 }
 
+export interface SquadEvaluationResult {
+  playerId: string;
+  playerName: string;
+  teamLogo: string;
+  validConditionsCount: number;
+  validPositionsCount: number;
+  overallPercentage: number;
+  slotsAnalysis: Record<string, {
+    playerName: string;
+    conditionTitle: string;
+    isConditionMet: boolean;
+    conditionReason: string;
+    isPositionValid: boolean;
+    positionReason: string;
+  }>;
+  critiqueSummary: string;
+}
+
 export interface SquadAIEvaluation {
   playerId: string;
   playerName: string;
   selectedClub?: DraftClub | null;
+  teamLogo?: string;
   validConditionsCount: number; // 0 to 5
   validPositionsCount: number;  // 0 to 5
   totalValidCount?: number;     // 0 to 10
   conditionVerifications: PlayerConditionVerification[];
+  slotsAnalysis?: Record<string, {
+    playerName: string;
+    conditionTitle: string;
+    isConditionMet: boolean;
+    conditionReason: string;
+    isPositionValid: boolean;
+    positionReason: string;
+  }>;
   ratings: {
     gk: number;        // out of 100
     defense: number;   // out of 100 (DEF_1 + DEF_2)
@@ -114,6 +141,7 @@ export interface SquadAIEvaluation {
   };
   overallPercentage: number; // e.g. 88%
   critiqueTitle: string;     // e.g. 'هجوم فتاك ودفاع يغرق في شبر مية'
+  critiqueSummary?: string;
   detailedBreakdown: {
     strengths: string[];     // نقاط القوة
     weaknesses: string[];    // نقاط الضعف
@@ -150,7 +178,8 @@ export type DraftAction =
   | 'RESET_LOBBY'
   | 'ROOM_TERMINATED'
   | 'DRAFT_FINISHED'
-  | 'PUSH_FINAL_SQUAD';
+  | 'PUSH_FINAL_SQUAD'
+  | 'FORCE_PUSH_SQUADS';
 
 export interface DraftEventPayload {
   action: DraftAction;
