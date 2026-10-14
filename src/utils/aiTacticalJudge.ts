@@ -8,23 +8,31 @@ import {
   DraftPosition,
 } from '../pages/football/draft-5/types';
 import { DraftCondition } from '../data/draftConditions';
-import { FootballPlayer } from '../data/footballMasterData';
+import { FootballPlayer, FOOTBALL_PLAYERS_MASTER } from '../data/footballMasterData';
+import { normalizeArabicFootball } from './footballHistoryEngine';
 
 /**
- * Two-Tier AI Verification & Tie-Breaking Engine
+ * 3-Pillar AI Tactical Judge Engine
  *
- * Step 1: Condition Verification (فحص الشروط والعد التراكمي مع تفصيل صريح للخطأ)
- * - Verifies whether each player fulfills the assigned round condition.
- * - Explains specifically why a player failed (e.g. "محمد صلاح لم يحقق شرط لاعب أصلع").
- * - Counts validConditionsCount (0 to 5) for each contestant.
+ * Pillar 1: Condition Adherence (فحص استيفاء الشروط)
+ * - Evaluates if each player genuinely meets the condition assigned to their slot.
+ * - Explicit verdict: [✓ مطابق] or [✗ غير مطابق].
+ * - Explicit failure reasons (e.g. "خطأ: ميسي لم يحقق شرط [لاعب أصلع]").
  *
- * Step 2: Determination Rule (قاعدة الفوز والتفضيل الصارمة)
- * - If one contestant has higher valid conditions than everyone else, they win directly!
- * - If multiple contestants are TIED on the highest condition count:
- *   Trigger head-to-head tactical breakdown:
- *   Compare GK, Defense (DEF_1 + DEF_2), Midfield (MID), Attack (FWD).
- *   Calculate overall percentage (0% - 100%).
- *   Pundit banter highlights superior lines, and the highest percentage wins!
+ * Pillar 2: Positional Accuracy (فحص ملاءمة المركز)
+ * - Checks whether the footballer actually played or is renowned in that slot:
+ *   - GK: Must be a recognized goalkeeper.
+ *   - DEF_1 / DEF_2: Center-back, full-back, or defensive wing-back.
+ *   - MID: Central, attacking, or defensive midfielder.
+ *   - FWD: Striker, winger, or center-forward.
+ * - Sarcastic & tactical penalty for out-of-position selections!
+ *
+ * Pillar 3: Tactical Strength & Percentage Score (تقييم القوة العامة)
+ * - Line-by-line rating: Goalkeeping, Defense, Midfield, Attack, Synergy (out of 100).
+ * - Overall Strength Percentage (e.g. 88%).
+ * - Winner Determination:
+ *   Rule 1: Highest number of valid conditions and positions wins first.
+ *   Rule 2 (Tie-break): Highest overall strength percentage wins.
  */
 export async function evaluateDraftSquadsWithAI(
   contestants: DraftContestant[],
@@ -54,7 +62,7 @@ export async function evaluateDraftSquadsWithAI(
 
     const response = await supabase.functions.invoke('ai-judge', {
       body: {
-        mode: 'football_draft_v2',
+        mode: 'football_draft_3_pillar',
         contestants: payload,
       },
     });
@@ -67,19 +75,102 @@ export async function evaluateDraftSquadsWithAI(
   }
 
   // Resilient Local Engine
-  const evaluations = generateLocalTwoTierEvaluations(contestants);
+  const evaluations = generateLocalThreePillarEvaluations(contestants);
   return buildVerdictResult(evaluations, contestants);
 }
 
 /**
- * Robust Local Evaluation Engine
+ * Determine a player's natural position from master data or name lookup
  */
-function generateLocalTwoTierEvaluations(
+export function getPlayerNaturalPosition(player: FootballPlayer | { name: string; position?: string }): 'GK' | 'DEF' | 'MID' | 'FWD' {
+  if (player.position && ['GK', 'DEF', 'MID', 'FWD'].includes(player.position)) {
+    return player.position as 'GK' | 'DEF' | 'MID' | 'FWD';
+  }
+
+  const cleanName = normalizeArabicFootball(player.name);
+  const found = FOOTBALL_PLAYERS_MASTER.find(
+    (p) => normalizeArabicFootball(p.name) === cleanName || (p.aliases && p.aliases.some((a) => normalizeArabicFootball(a) === cleanName))
+  );
+
+  if (found && found.position) {
+    return found.position;
+  }
+
+  // Heuristic fallbacks for well-known goalkeepers and defenders
+  if (/بوفون|كاسياس|نوير|كورتوا|أليسون|إيدرسون|دي خيا|بونو|العويس|المعيوف|تير شتيغن|دوناروما|نافاس|بارتيز|تشيك|لوريس|خان/.test(player.name)) {
+    return 'GK';
+  }
+  if (/مالديني|راموس|فان دايك|بويول|كانافارو|بيكي|سيلفا|كوليبالي|مارسيلو|ألفيس|أرنولد|روبرتسون|دياز|البليهي|هوساوي|حجازي|والكر|حكيمي/.test(player.name)) {
+    return 'DEF';
+  }
+  if (/زيدان|مودريتش|تشافي|إنييستا|كروس|دي بروين|كانتي|كاسيميرو|بوسكيتس|بيرلو|جيرارد|لامبارد|سافيتش|نيفيز|سالم|عطيف|بيغبا|رودري/.test(player.name)) {
+    return 'MID';
+  }
+
+  return 'FWD';
+}
+
+/**
+ * Format position names in Arabic
+ */
+const POSITION_ARABIC_NAMES: Record<string, string> = {
+  GK: 'حارس مرمى',
+  DEF: 'مدافع',
+  DEF_1: 'مدافع أول',
+  DEF_2: 'مدافع ثانٍ',
+  MID: 'خط وسط',
+  FWD: 'مهاجم',
+};
+
+/**
+ * Pillar 2: Positional Accuracy Check
+ */
+function verifyPlayerPosition(
+  player: FootballPlayer,
+  slot: DraftPosition
+): { isPositionValid: boolean; positionReason: string; naturalPosition: string } {
+  const naturalPos = getPlayerNaturalPosition(player);
+  const naturalName = POSITION_ARABIC_NAMES[naturalPos] || naturalPos;
+  const slotName = POSITION_ARABIC_NAMES[slot] || slot;
+
+  let isPositionValid = false;
+  let positionReason = '';
+
+  if (slot === 'GK') {
+    isPositionValid = naturalPos === 'GK';
+    positionReason = isPositionValid
+      ? `مركز سليم: ${player.name} حارس مرمى خبير ويعتمد عليه.`
+      : `كارثة تكتيكية: وضع ${player.name} في حراسة المرمى سيكلف الفريق كوارث، فهو لاعب ${naturalName}!`;
+  } else if (slot === 'DEF_1' || slot === 'DEF_2') {
+    isPositionValid = naturalPos === 'DEF';
+    positionReason = isPositionValid
+      ? `مركز سليم: ${player.name} صخرة دفاعية في مكانه الطبيعي.`
+      : `ثغرة دفاعية فادحة: إشراك ${player.name} في الخط الخلفي مجازفة انتحارية، مركزه الحقيقي ${naturalName}!`;
+  } else if (slot === 'MID') {
+    isPositionValid = naturalPos === 'MID';
+    positionReason = isPositionValid
+      ? `مركز سليم: ${player.name} مايسترو خط الوسط وقائد الإيقاع.`
+      : `خلل في التوزيع: وضع ${player.name} في خط الوسط يفقده بريقه، فهو في الأصل ${naturalName}!`;
+  } else if (slot === 'FWD') {
+    isPositionValid = naturalPos === 'FWD';
+    positionReason = isPositionValid
+      ? `مركز سليم: ${player.name} هداف فتاك ومرعب لحراس الخصم.`
+      : `عقم هجومي: وضع ${player.name} كرأس حربة قرار غير مفهوم لأنه لاعب ${naturalName}!`;
+  }
+
+  return { isPositionValid, positionReason, naturalPosition: naturalName };
+}
+
+/**
+ * Robust Local 3-Pillar Evaluation Engine
+ */
+function generateLocalThreePillarEvaluations(
   contestants: DraftContestant[]
 ): SquadAIEvaluation[] {
   return contestants.map((c) => {
     const verifications: PlayerConditionVerification[] = [];
-    let validCount = 0;
+    let validCondCount = 0;
+    let validPosCount = 0;
 
     DRAFT_SLOTS_ORDER.forEach((pos) => {
       const player = c.picks[pos];
@@ -89,40 +180,76 @@ function generateLocalTwoTierEvaluations(
         verifications.push({
           position: pos,
           playerName: 'فارغ',
+          playerPhoto: '',
           conditionTitle: cond?.title || 'شرط الجولة',
           isValid: false,
           reason: 'لم يتم اختيار أي لاعب في هذا المركز!',
+          isPositionValid: false,
+          positionReason: 'المركز فارغ تماماً!',
+          naturalPosition: '-',
         });
         return;
       }
 
-      // Check player against condition with explicit error breakdown
-      const checkResult = verifyPlayerConditionLocal(player, cond);
-      verifications.push(checkResult);
-      if (checkResult.isValid) validCount++;
+      // Pillar 1: Condition Adherence
+      const condCheck = verifyPlayerConditionLocal(player, cond);
+      if (condCheck.isValid) validCondCount++;
+
+      // Pillar 2: Positional Accuracy
+      const posCheck = verifyPlayerPosition(player, pos);
+      if (posCheck.isPositionValid) validPosCount++;
+
+      verifications.push({
+        position: pos,
+        playerName: player.name,
+        playerPhoto: player.photo || '',
+        conditionTitle: cond?.title || 'بدون شرط',
+        isValid: condCheck.isValid,
+        reason: condCheck.reason,
+        isPositionValid: posCheck.isPositionValid,
+        positionReason: posCheck.positionReason,
+        naturalPosition: posCheck.naturalPosition,
+      });
     });
 
-    // Tactical Line Ratings
+    // Pillar 3: Tactical Strength & Percentage Score
     const gk = c.picks.GK;
     const def1 = c.picks.DEF_1;
     const def2 = c.picks.DEF_2;
     const mid = c.picks.MID;
     const fwd = c.picks.FWD;
 
-    let gkScore = gk ? Math.floor(78 + Math.random() * 18) : 35;
-    let defScore = def1 && def2 ? Math.floor(80 + Math.random() * 16) : (def1 || def2 ? 55 : 30);
-    let midScore = mid ? Math.floor(80 + Math.random() * 16) : 35;
-    let fwdScore = fwd ? Math.floor(82 + Math.random() * 16) : 35;
-    let synergyScore = Math.floor(70 + Math.random() * 25);
+    const gkPosValid = gk ? verifyPlayerPosition(gk, 'GK').isPositionValid : false;
+    const def1PosValid = def1 ? verifyPlayerPosition(def1, 'DEF_1').isPositionValid : false;
+    const def2PosValid = def2 ? verifyPlayerPosition(def2, 'DEF_2').isPositionValid : false;
+    const midPosValid = mid ? verifyPlayerPosition(mid, 'MID').isPositionValid : false;
+    const fwdPosValid = fwd ? verifyPlayerPosition(fwd, 'FWD').isPositionValid : false;
 
-    // Boost for trophies & real-world pedigree
-    if (gk?.trophies?.length) gkScore = Math.min(99, gkScore + 5);
-    if (def1?.trophies?.length || def2?.trophies?.length) defScore = Math.min(99, defScore + 4);
-    if (mid?.trophies?.length) midScore = Math.min(99, midScore + 5);
-    if (fwd?.trophies?.length) fwdScore = Math.min(99, fwdScore + 5);
+    // Goalkeeping rating (80-99 if valid GK, 15-35 if wrong position or empty)
+    let gkScore = gk ? (gkPosValid ? Math.floor(82 + Math.random() * 16) : 25) : 10;
+    
+    // Defense rating
+    let defBase = (def1 ? (def1PosValid ? 42 : 15) : 5) + (def2 ? (def2PosValid ? 42 : 15) : 5);
+    let defScore = Math.min(99, Math.max(15, defBase + Math.floor(Math.random() * 12)));
+
+    // Midfield rating
+    let midScore = mid ? (midPosValid ? Math.floor(82 + Math.random() * 16) : 30) : 10;
+
+    // Forward rating
+    let fwdScore = fwd ? (fwdPosValid ? Math.floor(84 + Math.random() * 15) : 30) : 10;
+
+    // Synergy: Reward matching clubs or valid positions
+    let synergyScore = 50 + validPosCount * 8 + (validCondCount >= 4 ? 10 : 0);
+    synergyScore = Math.min(99, Math.max(30, synergyScore));
+
+    // Boost for trophies & pedigree
+    if (gk?.trophies?.length && gkPosValid) gkScore = Math.min(99, gkScore + 4);
+    if ((def1?.trophies?.length || def2?.trophies?.length) && (def1PosValid || def2PosValid)) defScore = Math.min(99, defScore + 4);
+    if (mid?.trophies?.length && midPosValid) midScore = Math.min(99, midScore + 4);
+    if (fwd?.trophies?.length && fwdPosValid) fwdScore = Math.min(99, fwdScore + 4);
 
     const overallPercentage = Math.round(
-      gkScore * 0.15 + defScore * 0.25 + midScore * 0.25 + fwdScore * 0.25 + synergyScore * 0.1
+      gkScore * 0.18 + defScore * 0.26 + midScore * 0.26 + fwdScore * 0.22 + synergyScore * 0.08
     );
 
     const critiqueTitles = [
@@ -131,31 +258,38 @@ function generateLocalTwoTierEvaluations(
       'منظومة صلبة بروح إيطالية لا تخترق',
       'فريق استعراضي مليء بالسحر والمهارة الفردية',
       'تكتيك عصري بضغط عالٍ وسرعات خارقة في المرتدات',
-      'قوة بدنية جبارة وهيمنة على الكرات الهوائية'
+      'قوة بدنية جبارة وهيمنة على الكرات الهوائية',
+      'فريق مليء بالثغرات بسبب توظيف عشوائي للمراكز'
     ];
-    const critiqueTitle = critiqueTitles[Math.floor(Math.random() * critiqueTitles.length)];
+    const critiqueTitle = validPosCount <= 2
+      ? 'فريق يعاني من تخبط تكتيكي وتوظيف خاطئ للمراكز'
+      : critiqueTitles[Math.floor(Math.random() * (critiqueTitles.length - 1))];
 
     const strengths: string[] = [];
     const weaknesses: string[] = [];
 
-    if (fwd) strengths.push(`حسم مرعب أمام المرمى بفضل ${fwd.name}`);
-    if (mid) strengths.push(`تحكم وإيقاع سلس في خط الوسط بقيادة ${mid.name}`);
-    if (def1 || def2) strengths.push(`تغطية دفاعية قوية مع ${[def1?.name, def2?.name].filter(Boolean).join(' و')}`);
-    if (gk) strengths.push(`جدار أمان وردات فعل حاسمة مع ${gk.name}`);
+    if (fwd && fwdPosValid) strengths.push(`حسم مرعب أمام المرمى بفضل ${fwd.name}`);
+    if (mid && midPosValid) strengths.push(`تحكم وإيقاع سلس في خط الوسط بقيادة ${mid.name}`);
+    if ((def1 || def2) && (def1PosValid || def2PosValid)) {
+      strengths.push(`صلابة دفاعية بتواجد ${[def1?.name, def2?.name].filter(Boolean).join(' و')}`);
+    }
+    if (gk && gkPosValid) strengths.push(`أمان مطلق وردات فعل حاسمة مع الحارس ${gk.name}`);
 
-    if (!gk) weaknesses.push('غياب الحارس الأساسي يكلف الفريق أهدافاً سهلة');
-    if (!def1 || !def2) weaknesses.push('نقص في عمق الدفاع قد يسبب ارتباكاً في العرضيات');
-    if (!mid) weaknesses.push('صعوبة في الخروج بالكرة والربط بين الدفاع والهجوم');
-    if (!fwd) weaknesses.push('عقم هجومي واضح بغياب المهاجم الصريح');
-    if (weaknesses.length === 0) weaknesses.push('اندفاع هجومي قد يترك مساحات في الهجمات المرتدة');
+    if (!gk || !gkPosValid) weaknesses.push(gk ? `كارثة الحراسة: ${gk.name} ليس حارساً مرمى وسيتلقى أهدافاً سهلة` : 'غياب الحارس الأساسي تماماً');
+    if (!def1PosValid || !def2PosValid) weaknesses.push('ثغرات في العمق الدفاعي بسبب أخطاء تمركز أو غياب المدافعين الصريحين');
+    if (!midPosValid) weaknesses.push('صعوبة في الربط بين الخطوط بسبب مركز الوسط غير السليم');
+    if (!fwdPosValid) weaknesses.push('غياب المهاجم الهداف يعطل الفاعلية الهجومية');
+    if (weaknesses.length === 0) weaknesses.push('اندفاع هجومي مبالغ فيه قد يترك مساحات في المرتدات');
 
-    const tacticalSummary = `تشكيلة ${c.name} (${c.selectedClub?.name || 'فريق الأحلام'}) حققت ${validCount}/5 من الشروط الرسمية. الخطوط مترابطة والتوازن التكتيكي واضح، والاعتماد الأكبر على قوة ${fwd?.name || mid?.name || 'المنظومة الجماعية'}.`;
+    const tacticalSummary = `تشكيلة ${c.name} حققت ${validCondCount}/5 من شروط الجولة و ${validPosCount}/5 من المراكز السليمة. القوة التكتيكية الإجمالية وصلت إلى ${overallPercentage}%.`;
 
     return {
       playerId: c.id,
       playerName: c.name,
       selectedClub: c.selectedClub,
-      validConditionsCount: validCount,
+      validConditionsCount: validCondCount,
+      validPositionsCount: validPosCount,
+      totalValidCount: validCondCount + validPosCount,
       conditionVerifications: verifications,
       ratings: {
         gk: gkScore,
@@ -181,14 +315,11 @@ function generateLocalTwoTierEvaluations(
 function verifyPlayerConditionLocal(
   player: FootballPlayer,
   condition: DraftCondition | null
-): PlayerConditionVerification {
+): { isValid: boolean; reason: string } {
   if (!condition) {
     return {
-      position: (player.position || 'FWD') as DraftPosition,
-      playerName: player.name,
-      conditionTitle: 'بدون شرط',
       isValid: true,
-      reason: 'تم قبول الاختيار بنجاح.',
+      reason: 'تم قبول الاختيار بنجاح (بدون شرط محدد).',
     };
   }
 
@@ -199,105 +330,101 @@ function verifyPlayerConditionLocal(
   const clubs = (player.clubs || []).join(' ').toLowerCase();
 
   let isValid = true;
-  let reason = `${player.name} حقق شرط: ${condition.title}`;
+  let reason = `${player.name} حقق شرط: [${condition.title}] بنجاح`;
 
   switch (cId) {
     case 'c_bald':
       isValid = /زيدان|روبين|كانتي|كومباني|ستام|بارتيز|هنري|بيبي|سكيرتل|كولاردوف|شيلفي/.test(pName) || traits.includes('أصلع');
-      reason = isValid ? `${player.name} أصلع بالكامل أو حليق الرأس` : `${player.name} لم يحقق شرط لاعب أصلع (يمتلك شعراً كافياً)`;
+      reason = isValid ? `${player.name} أصلع بالكامل أو حليق الرأس` : `خطأ: ${player.name} لم يحقق شرط [لاعب أصلع]`;
       break;
 
     case 'c_afro':
       isValid = /فيلاني|كوكوريلا|ساني|مارسيلو|لويز|فلاح|غوندوزي|ويليان|فالديراما|كولوتشيني/.test(pName) || traits.includes('كدش') || traits.includes('أفروا');
-      reason = isValid ? `${player.name} يمتلك شعر كدش / أفروا كثيف` : `${player.name} لم يحقق شرط الكدش أو الأفروا`;
+      reason = isValid ? `${player.name} يمتلك شعر كدش / أفروا كثيف` : `خطأ: ${player.name} لم يحقق شرط [شعر كدش أو أفروا]`;
       break;
 
     case 'c_long_hair':
       isValid = /مودريتش|إبراهيموفيتش|كافاني|بويول|كانيجيا|باتيستوتا|راموس|بيرلو|نيدفيد|غريزمان|هالاند/.test(pName) || traits.includes('طويل');
-      reason = isValid ? `${player.name} معروف بشعره الطويل المربوط أو المسدول` : `${player.name} شعره قصير ولم يحقق شرط الشعر الطويل`;
+      reason = isValid ? `${player.name} معروف بشعره الطويل المربوط أو المسدول` : `خطأ: ${player.name} شعره قصير ولم يحقق شرط [شعر طويل]`;
       break;
 
     case 'c_beard':
       isValid = /صلاح|بنزيما|ميسي|جيرو|أليسون|بيكيه|توران|دي روسي|راموس|كافاني/.test(pName) || traits.includes('لحية');
-      reason = isValid ? `${player.name} يمتلك لحية واضحة وكثيفة` : `${player.name} حليق اللحية ولم يحقق الشرط`;
+      reason = isValid ? `${player.name} يمتلك لحية واضحة وكثيفة` : `خطأ: ${player.name} حليق اللحية ولم يحقق شرط [يمتلك لحية]`;
       break;
 
     case 'c_dark_skin':
       isValid = /كانتي|فينيسيوس|مبابي|كوليبالي|بوغبا|توريه|ماني|ديمبيلي|سيسوكو|ساني|كامافينغا/.test(pName) || traits.includes('أسمر');
-      reason = isValid ? `${player.name} من ذوي البشرة السمراء` : `${player.name} لا تنطبق عليه سمات البشرة المطلوبة`;
+      reason = isValid ? `${player.name} من ذوي البشرة السمراء` : `خطأ: ${player.name} لا تنطبق عليه سمات [بشرة سمراء]`;
       break;
 
     case 'c_handsome':
       isValid = /بيكهام|جيرو|مالديني|كاكا|رونالدو|كانافارو|غريزمان|موراتا|توريس/.test(pName) || traits.includes('وسيم');
-      reason = isValid ? `${player.name} مشهور بوسامته وجاذبيته الإعلامية` : `${player.name} لم يصنف ضمن وسماء الملاعب الرياضية`;
+      reason = isValid ? `${player.name} مشهور بوسامته وجاذبيته الإعلامية` : `خطأ: ${player.name} لم يصنف ضمن [وسماء الملاعب]`;
       break;
 
     case 'c_no_tattoos':
       isValid = /رونالدو|صلاح|ماني|كانتي|كاسيميرو|بوسكيتس|إنييستا|تشافي/.test(pName) || traits.includes('بدون وشم');
-      reason = isValid ? `${player.name} معروف بعدم رسم أي وشم على جسده` : `${player.name} يمتلك وشوماً على جسده`;
+      reason = isValid ? `${player.name} معروف بعدم رسم أي وشم على جسده` : `خطأ: ${player.name} يمتلك وشوماً على جسده`;
       break;
 
     case 'c_tall_giant':
       isValid = /هالاند|كورتوا|فان دايك|إبراهيموفيتش|بيكيه|بونو|نوير|دوناروما|ماتيغ/.test(pName) || traits.includes('طويل') || traits.includes('عملاق');
-      reason = isValid ? `${player.name} طوله يتجاوز 190 سم` : `${player.name} طوله أقل من 190 سم ولم يحقق شرط الطول`;
+      reason = isValid ? `${player.name} طوله يتجاوز 190 سم` : `خطأ: ${player.name} طوله أقل من 190 سم ولم يحقق شرط [العملاق]`;
       break;
 
     case 'c_short_speed':
       isValid = /ميسي|كانتي|إنسيني|فيراتي|مارادونا|كازورلا|جيوفينكو|مودريتش/.test(pName) || traits.includes('قصير');
-      reason = isValid ? `${player.name} طوله أقل من 172 سم` : `${player.name} طوله يزيد عن 172 سم`;
+      reason = isValid ? `${player.name} طوله أقل من 172 سم` : `خطأ: ${player.name} طوله يزيد عن 172 سم ولم يحقق شرط [قصير القامة]`;
       break;
 
     case 'c_lefty':
       isValid = /ميسي|روبين|ديماريا|محرز|صلاح|مالديني|مارادونا|بيل|سيلفا|خاميس|كاسياس/.test(pName) || traits.includes('أعسر') || traits.includes('أشول');
-      reason = isValid ? `${player.name} يعتمد كلياً على قدمه اليسرى` : `${player.name} يلعب بقدمه اليمنى وليس أشول`;
+      reason = isValid ? `${player.name} يعتمد كلياً على قدمه اليسرى` : `خطأ: ${player.name} يلعب بقدمه اليمنى وليس أشول`;
       break;
 
     case 'c_captain':
       isValid = /راموس|ميسي|رونالدو|مالديني|جيرارد|توتي|بوفون|نوير|بويول|كومباني|كين/.test(pName) || traits.includes('قائد') || traits.includes('كابتن');
-      reason = isValid ? `${player.name} ارتدى شارة القيادة لفريقه أو منتخبه` : `${player.name} لم يحمل شارة القيادة بصفة مستمرة`;
+      reason = isValid ? `${player.name} ارتدى شارة القيادة لفريقه أو منتخبه` : `خطأ: ${player.name} لم يحمل شارة القيادة بصفة مستمرة`;
       break;
 
     case 'c_shirt_10':
       isValid = /ميسي|بيليه|مارادونا|زيدان|مودريتش|توتي|نيمار|رونالدينيو|هازارد|مبابي|أوزيل/.test(pName) || traits.includes('10');
-      reason = isValid ? `${player.name} ارتدى القميص رقم 10 الأسطوري` : `${player.name} لم يشتهر بارتداء الرقم 10`;
+      reason = isValid ? `${player.name} ارتدى القميص رقم 10 الأسطوري` : `خطأ: ${player.name} لم يشتهر بارتداء الرقم 10`;
       break;
 
     case 'c_shirt_7':
       isValid = /رونالدو|بيكهام|كانتونا|راؤول|سون|ريبيري|فيغو|غريزمان|مبابي|كانيدو/.test(pName) || traits.includes('7');
-      reason = isValid ? `${player.name} ارتدى القميص رقم 7 في مسيرته` : `${player.name} لم يشتهر بارتداء الرقم 7`;
+      reason = isValid ? `${player.name} ارتدى القميص رقم 7 في مسيرته` : `خطأ: ${player.name} لم يشتهر بارتداء الرقم 7`;
       break;
 
     case 'c_muslim':
       isValid = /بنزيما|صلاح|كانتي|ماني|زيدان|أوزيل|بوغبا|حكيمي|محرز|ريبيري|توريه|ديمبيلي/.test(pName) || traits.includes('مسلم');
-      reason = isValid ? `${player.name} مسلم الديانة رسمياً` : `${player.name} ديانته ليست مسلمة`;
+      reason = isValid ? `${player.name} مسلم الديانة رسمياً` : `خطأ: ${player.name} ديانته ليست مسلمة`;
       break;
 
     case 'c_roshn':
       isValid = clubs.includes('هلال') || clubs.includes('نصر') || clubs.includes('اتحاد') || clubs.includes('أهلي') || clubs.includes('شباب') || clubs.includes('اتفاق') || clubs.includes('قادسية') || /رونالدو|بنزيما|نيمار|كانتي|سالم|البليهي|بونو|محرز|فيرمينو|سافيتش|نيفيز|ميتروفيتش/.test(pName);
-      reason = isValid ? `${player.name} مثل أحد أندية دوري روشن السعودي` : `${player.name} لم يسبق له اللعب في الدوري السعودي للمحترفين`;
+      reason = isValid ? `${player.name} مثل أحد أندية دوري روشن السعودي` : `خطأ: ${player.name} لم يسبق له اللعب في الدوري السعودي للمحترفين`;
       break;
 
     case 'c_world_cup_winner':
       isValid = trophies.includes('كأس العالم') || /ميسي|مبابي|كانتي|بوفون|إنييستا|زيدان|رونالدو|ريفالدو|تشافي|راموس|نوير|كروس|فاران|لوريس/.test(pName);
-      reason = isValid ? `${player.name} توج ببطولة كأس العالم` : `${player.name} لم يتوج بلقب كأس العالم مع منتخب بلاده`;
+      reason = isValid ? `${player.name} توج ببطولة كأس العالم` : `خطأ: ${player.name} لم يتوج بلقب كأس العالم مع منتخب بلاده`;
       break;
 
     default:
       isValid = true;
-      reason = `${player.name} مطابق لشرط: ${condition.title}`;
+      reason = `${player.name} مطابق لشرط: [${condition.title}]`;
   }
 
-  return {
-    position: (player.position || 'FWD') as DraftPosition,
-    playerName: player.name,
-    conditionTitle: condition.title,
-    isValid,
-    reason,
-  };
+  return { isValid, reason };
 }
 
 /**
- * Step 2: Determination Rule (قاعدة الفوز والتفضيل الصارمة)
+ * Grand Final Scoring & Winner Determination
+ * Rule 1: Highest number of valid conditions and positions wins first.
+ * Rule 2 (Tie-break): Highest overall strength percentage wins.
  */
 function buildVerdictResult(
   evaluations: SquadAIEvaluation[],
@@ -321,46 +448,55 @@ function buildVerdictResult(
       const match = contestants.find((c) => c.id === ev.playerId);
       if (match?.selectedClub) ev.selectedClub = match.selectedClub;
     }
+    // Calculate total valid points (conditions + positions)
+    if (ev.totalValidCount === undefined) {
+      ev.totalValidCount = (ev.validConditionsCount || 0) + (ev.validPositionsCount || 0);
+    }
   });
 
-  // 1. Find maximum conditions fulfilled
-  const maxConditionsMet = Math.max(...evaluations.map((e) => e.validConditionsCount));
+  // Sort by Rule 1 (highest valid conditions & positions) then Rule 2 (highest overall strength %)
+  const sorted = [...evaluations].sort((a, b) => {
+    const totalA = a.totalValidCount ?? (a.validConditionsCount + a.validPositionsCount);
+    const totalB = b.totalValidCount ?? (b.validConditionsCount + b.validPositionsCount);
+    if (totalB !== totalA) {
+      return totalB - totalA;
+    }
+    // If tied on total valid count, sort by condition count first
+    if (b.validConditionsCount !== a.validConditionsCount) {
+      return b.validConditionsCount - a.validConditionsCount;
+    }
+    // Rule 2 Tie-breaker: Highest overall percentage
+    return b.overallPercentage - a.overallPercentage;
+  });
 
-  // 2. Filter contestants who achieved max conditions
-  const topConditionPlayers = evaluations.filter((e) => e.validConditionsCount === maxConditionsMet);
+  const winner = sorted[0];
+  const maxConditionsMet = winner.validConditionsCount;
 
-  // Immediate Winner by Condition Count:
-  if (topConditionPlayers.length === 1) {
-    const winner = topConditionPlayers[0];
-    return {
-      evaluations,
-      winnerId: winner.playerId,
-      winnerName: winner.playerName,
-      winnerClub: winner.selectedClub,
-      isTie: false,
-      tiedContestantIds: [],
-      maxConditionsMet,
-      verdictBanner: `${winner.playerName} حقق [${winner.validConditionsCount}/5] شروط وفاز بالبطولة! 🥇`,
-    };
-  }
+  // Check if there was a tie on valid counts with runner up
+  const runnerUp = sorted[1];
+  const totalWinnerValid = winner.totalValidCount ?? (winner.validConditionsCount + winner.validPositionsCount);
+  const totalRunnerValid = runnerUp ? (runnerUp.totalValidCount ?? (runnerUp.validConditionsCount + runnerUp.validPositionsCount)) : -1;
 
-  // TIE EXISTS! Multiple contestants achieved max conditions
-  // Resolve by overall tactical strength percentage
-  const sortedTied = [...topConditionPlayers].sort((a, b) => b.overallPercentage - a.overallPercentage);
-  const winner = sortedTied[0];
-  const runnerUp = sortedTied[1];
+  const isTie = runnerUp && totalWinnerValid === totalRunnerValid;
+  const tiedIds = sorted
+    .filter((e) => (e.totalValidCount ?? (e.validConditionsCount + e.validPositionsCount)) === totalWinnerValid)
+    .map((e) => e.playerId);
 
-  const tieBreakAnalysis = `مقارنة الحراسة والدفاع والوسط والهجوم بين ${winner.playerName} (${winner.overallPercentage}%) و ${runnerUp?.playerName || 'المنافسين'} (${runnerUp?.overallPercentage || 0}%) رجحت كفة فريق ${winner.playerName} بفضل التناغم الهجومي وصلابة الخطوط!`;
+  const verdictBanner = `🏆 بطل الجولة: ${winner.playerName} بنسبة قوة [${winner.overallPercentage}%] و [${winner.validConditionsCount}/5] شروط متطابقة!`;
+
+  const tieBreakAnalysis = isTie
+    ? `تعادل في استيفاء الشروط والمراكز (${totalWinnerValid}/10)! حسمت اللائحة التكتيكية الفوز لصالح ${winner.playerName} بنسبة قوة إجمالية بلغت ${winner.overallPercentage}% مقابل ${runnerUp.overallPercentage}% لـ ${runnerUp.playerName} بفضل التناغم الهجومي والتوازن الدفاعي!`
+    : undefined;
 
   return {
-    evaluations,
+    evaluations: sorted,
     winnerId: winner.playerId,
     winnerName: winner.playerName,
     winnerClub: winner.selectedClub,
-    isTie: true,
-    tiedContestantIds: topConditionPlayers.map((p) => p.playerId),
+    isTie: Boolean(isTie),
+    tiedContestantIds: isTie ? tiedIds : [],
     maxConditionsMet,
-    verdictBanner: `تعادل في الشروط (${maxConditionsMet}/5)! حُسمت بالمقارنة التكتيكية المباشرة وتفوق فريق ${winner.playerName} بنسبة ${winner.overallPercentage}%! 🏆`,
+    verdictBanner,
     tieBreakAnalysis,
   };
 }

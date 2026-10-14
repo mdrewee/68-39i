@@ -45,12 +45,14 @@ export const getRoundPickOrder = (
   ];
 };
 
-export type DraftPhase = 'LOBBY' | 'DRAFTING' | 'AI_REVEAL' | 'MATCH_OVER';
+export type DraftPhase = 'LOBBY' | 'DRAFTING' | 'AI_REVEAL' | 'EVALUATION' | 'MATCH_OVER';
 
 export interface PlayerSquadSlot {
   playerName: string;
+  playerPhoto?: string;
   conditionId?: string;
   conditionTitle?: string;
+  conditionPrompt?: string;
 }
 
 export interface PlayerSquad {
@@ -86,9 +88,13 @@ export interface DraftContestant {
 export interface PlayerConditionVerification {
   position: DraftPosition;
   playerName: string;
+  playerPhoto?: string;
   conditionTitle: string;
-  isValid: boolean;
-  reason: string;
+  isValid: boolean; // Pillar 1: Condition Adherence
+  reason: string;   // Pillar 1: Explicit error/success explanation
+  isPositionValid?: boolean; // Pillar 2: Positional Accuracy
+  positionReason?: string;   // Pillar 2: Sarcastic/tactical positional critique
+  naturalPosition?: string;
 }
 
 export interface SquadAIEvaluation {
@@ -96,6 +102,8 @@ export interface SquadAIEvaluation {
   playerName: string;
   selectedClub?: DraftClub | null;
   validConditionsCount: number; // 0 to 5
+  validPositionsCount: number;  // 0 to 5
+  totalValidCount?: number;     // 0 to 10
   conditionVerifications: PlayerConditionVerification[];
   ratings: {
     gk: number;        // out of 100
@@ -129,6 +137,7 @@ export type DraftAction =
   | 'PLAYER_READY'
   | 'KICK_PLAYER'
   | 'GAME_START'
+  | 'LIVE_PICK_COMMITTED'
   | 'PICK_LOCKED'
   | 'PLAYER_PICKED'
   | 'PLAYER_LOCKED'
@@ -155,6 +164,12 @@ export interface DraftEventPayload {
   pickedPosition?: DraftPosition;
   pickedPlayer?: FootballPlayer;
   appliedCondition?: DraftCondition;
+  player?: {
+    name: string;
+    photo?: string;
+    conditionTitle?: string;
+    conditionPrompt?: string;
+  };
   // Specific payload for PLAYER_PICKED, PLAYER_LOCKED and DRAFT_COMPLETE
   slotKey?: DraftPosition;
   pickedPlayerName?: string;

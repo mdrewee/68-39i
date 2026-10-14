@@ -273,7 +273,40 @@ export const DraftMobileView: FC = () => {
     setSelectedSlotKey(null); // Reset active slot gate
     setQuery('');
 
-    // 2. Broadcast PLAYER_LOCKED and PLAYER_PICKED
+    // 2. Immediate Socket Broadcast on Pick: LIVE_PICK_COMMITTED
+    channelRef.current?.send({
+      type: 'broadcast',
+      event: 'draft_action',
+      payload: {
+        action: 'LIVE_PICK_COMMITTED',
+        playerId,
+        playerName,
+        slotKey: slotAssigned,
+        player: {
+          name: target.name,
+          photo: target.photo || '',
+          conditionTitle: currentCond?.title || '',
+          conditionPrompt: currentCond?.rulePrompt || currentCond?.title || '',
+        },
+      },
+    });
+
+    broadcastEvent({
+      action: 'LIVE_PICK_COMMITTED',
+      playerId,
+      playerName,
+      slotKey: slotAssigned,
+      player: {
+        name: target.name,
+        photo: target.photo || '',
+        conditionTitle: currentCond?.title || '',
+        conditionPrompt: currentCond?.rulePrompt || currentCond?.title || '',
+      },
+      pickedPlayerName: target.name,
+      conditionTitle: currentCond?.title || '',
+    });
+
+    // Also broadcast PLAYER_LOCKED and PLAYER_PICKED for backwards compatibility
     broadcastEvent({
       action: 'PLAYER_LOCKED',
       pickerName: playerName,
