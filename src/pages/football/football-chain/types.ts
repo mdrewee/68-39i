@@ -9,11 +9,13 @@ export type ChainGamePhase =
 export interface ChainPlayer {
   id: string;
   name: string;
+  photo?: string;
+  photoUrl?: string;
+  clubs: string[];
+  nationalTeam?: string;
   nationality?: string;
   nationalityCode?: string;
-  clubs: string[];
   currentClub?: string;
-  photoUrl?: string;
   position?: string;
 }
 
@@ -28,7 +30,7 @@ export interface ChainChallenge {
   id: string;
   startPlayer: ChainPlayer;
   targetPlayer: ChainPlayer;
-  minHops: number;
+  minHops?: number;
   hint?: string;
 }
 
@@ -42,6 +44,7 @@ export interface ChainContestantProgress {
   finishedAt?: number;
   score: number;
   roundWins: number;
+  isReady?: boolean;
 }
 
 export interface WinningChainReveal {
@@ -58,6 +61,7 @@ export interface WinningChainReveal {
 
 export type ChainAction =
   | 'PLAYER_READY'
+  | 'PLAYER_READY_TOGGLE'
   | 'KICK_PLAYER'
   | 'GAME_START'
   | 'STEP_ADVANCED'
@@ -67,6 +71,7 @@ export type ChainAction =
   | 'START_NEXT_ROUND'
   | 'PLAYER_NEXT_ROUND_READY'
   | 'RESET_LOBBY'
+  | 'TERMINATE_ROOM'
   | 'ROOM_TERMINATED';
 
 export interface ChainEventPayload {

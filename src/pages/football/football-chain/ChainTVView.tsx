@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { Play, Users, Trophy, RotateCcw, ArrowLeft, CheckCircle2, Clock, Award, Sparkles, User, Zap } from 'lucide-react';
+import { Play, Users, Trophy, RotateCcw, User, Zap } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { ChainTopBar } from './components/ChainTopBar';
@@ -12,7 +12,9 @@ import {
   ChainEventPayload,
   WinningChainReveal,
 } from './types';
-import { getRandomChainChallenges, CHAIN_CHALLENGES_BANK } from '../../../data/chainChallenges';
+import {
+  generateRandomChainChallenge,
+} from '../../../utils/footballChainEngine';
 import { sound } from '../../../lib/audio';
 
 export const ChainTVView: React.FC = () => {
@@ -26,16 +28,22 @@ export const ChainTVView: React.FC = () => {
 
   const [phase, setPhase] = useState<ChainGamePhase>('LOBBY');
   const [round, setRound] = useState<number>(1);
-  const [challenges, setChallenges] = useState<ChainChallenge[]>(() => getRandomChainChallenges(TOTAL_ROUNDS));
   const [currentChallenge, setCurrentChallenge] = useState<ChainChallenge | null>(null);
 
   // Contestants & Live Race Tracking
   const [contestants, setContestants] = useState<ChainContestantProgress[]>([]);
+  const [playersReadyMap, setPlayersReadyMap] = useState<Record<string, boolean>>({});
   const [timeLeftSec, setTimeLeftSec] = useState<number>(ROUND_DURATION_SEC);
   const [winningReveal, setWinningReveal] = useState<WinningChainReveal | null>(null);
 
+  // Auto-start Countdown state
+  const [autoStartCountdown, setAutoStartCountdown] = useState<number | null>(null);
+
   // Match cumulative leaderboards
   const [leaderboard, setLeaderboard] = useState<Record<string, { score: number; wins: number; name: string; teamLogo?: string }>>({});
+
+  // Procedural generation memory: prevent duplicate pairs across rounds
+  const usedPairsRef = useRef<Set<string>>(new Set());
 
   // Realtime References
   const channelRef = useRef<RealtimeChannel | null>(null);
@@ -58,6 +66,86 @@ export const ChainTVView: React.FC = () => {
       payload,
     });
   }, []);
+
+  // Host Terminate Room (Global Room Kill)
+  const handleTerminateRoom = useCallback(() => {
+    sound.playClick();
+    broadcastEvent({ action: 'TERMINATE_ROOM' });
+    broadcastEvent({ action: 'ROOM_TERMINATED' });
+    if (channelRef.current) {
+      channelRef.current.untrack();
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+    navigate('/');
+  }, [broadcastEvent, navigate]);
+
+  // Start Game: 100% Procedural Generation for Round 1
+  const handleStartGame = useCallback(() => {
+    if (contestants.length === 0) {
+      alert('يجب انضمام متسابق واحد على الأقل لبدء المنافسة!');
+      return;
+    }
+
+    sound.playRoundStart();
+    const firstChallenge = generateRandomChainChallenge(usedPairsRef.current);
+    setCurrentChallenge(firstChallenge);
+    setRound(1);
+    setTimeLeftSec(ROUND_DURATION_SEC);
+    setPhase('RACE_ACTIVE');
+    setWinningReveal(null);
+    setAutoStartCountdown(null);
+
+    // Reset contestant step counters for race
+    setContestants((prev) =>
+      prev.map((c) => ({
+        ...c,
+        currentStepCount: 0,
+        hasFinished: false,
+      }))
+    );
+
+    broadcastEvent({
+      action: 'GAME_START',
+      round: 1,
+      totalRounds: TOTAL_ROUNDS,
+      challenge: firstChallenge,
+    });
+  }, [contestants.length, broadcastEvent]);
+
+  // Check auto-start condition when all contestants are ready in lobby
+  useEffect(() => {
+    if (phase !== 'LOBBY') return;
+    if (contestants.length === 0) {
+      setAutoStartCountdown(null);
+      return;
+    }
+
+    const allReady = contestants.every((c) => playersReadyMap[c.playerId] === true);
+    if (allReady && contestants.length >= 1) {
+      if (autoStartCountdown === null) {
+        setAutoStartCountdown(3);
+      }
+    } else {
+      setAutoStartCountdown(null);
+    }
+  }, [contestants, playersReadyMap, phase, autoStartCountdown]);
+
+  // Auto-start ticker
+  useEffect(() => {
+    if (autoStartCountdown === null || phase !== 'LOBBY') return;
+    if (autoStartCountdown <= 0) {
+      handleStartGame();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      sound.playTick();
+      setAutoStartCountdown((prev) => (prev !== null ? prev - 1 : null));
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [autoStartCountdown, phase, handleStartGame]);
 
   // Supabase Realtime Setup
   useEffect(() => {
@@ -105,6 +193,7 @@ export const ChainTVView: React.FC = () => {
             hasFinished: existing?.hasFinished || false,
             score: existing?.score || 0,
             roundWins: existing?.roundWins || 0,
+            isReady: entry.isReady ?? existing?.isReady ?? false,
           };
         });
       });
@@ -112,7 +201,7 @@ export const ChainTVView: React.FC = () => {
 
     channel
       .on('presence', { event: 'sync' }, syncConnectedPlayers)
-      .on('presence', { event: 'join' }, ({ newPresences }) => {
+      .on('presence', { event: 'join' }, () => {
         sound.playPlayerJoin();
         syncConnectedPlayers();
       })
@@ -123,7 +212,22 @@ export const ChainTVView: React.FC = () => {
         if (!payload) return;
         const ev = payload as ChainEventPayload;
 
-        if (ev.action === 'STEP_ADVANCED' && ev.playerId) {
+        if (ev.action === 'PLAYER_READY' || ev.action === 'PLAYER_READY_TOGGLE') {
+          if (ev.playerId) {
+            const readyStatus = !!ev.isReady;
+            setPlayersReadyMap((prev) => ({
+              ...prev,
+              [ev.playerId!]: readyStatus,
+            }));
+            setContestants((prev) =>
+              prev.map((c) =>
+                c.playerId === ev.playerId
+                  ? { ...c, isReady: readyStatus }
+                  : c
+              )
+            );
+          }
+        } else if (ev.action === 'STEP_ADVANCED' && ev.playerId) {
           // Increment contestant's step count on the live track without revealing names
           setContestants((prev) =>
             prev.map((c) =>
@@ -209,7 +313,6 @@ export const ChainTVView: React.FC = () => {
     const interval = setInterval(() => {
       setTimeLeftSec((prev) => {
         if (prev <= 1) {
-          // Timer expired!
           handleRoundTimeout();
           return 0;
         }
@@ -227,10 +330,8 @@ export const ChainTVView: React.FC = () => {
   const handleRoundTimeout = useCallback(() => {
     sound.playIncorrect();
 
-    // Check if anyone made partial steps
     const highestStepContestant = [...contestantsRef.current].sort((a, b) => b.currentStepCount - a.currentStepCount)[0];
-
-    const currentCh = currentChallenge || challenges[0];
+    const currentCh = currentChallenge || generateRandomChainChallenge(usedPairsRef.current);
 
     const fallbackReveal: WinningChainReveal = {
       winnerId: highestStepContestant?.playerId || '',
@@ -251,43 +352,9 @@ export const ChainTVView: React.FC = () => {
       action: 'ROUND_TIMEOUT',
       winningReveal: fallbackReveal,
     });
-  }, [currentChallenge, challenges, broadcastEvent]);
+  }, [currentChallenge, broadcastEvent]);
 
-  // Start Game (Host Action)
-  const handleStartGame = () => {
-    if (contestants.length === 0) {
-      alert('يجب انضمام متسابق واحد على الأقل لبدء المنافسة!');
-      return;
-    }
-
-    sound.playRoundStart();
-    const challengeList = getRandomChainChallenges(TOTAL_ROUNDS);
-    setChallenges(challengeList);
-    const firstChallenge = challengeList[0];
-    setCurrentChallenge(firstChallenge);
-    setRound(1);
-    setTimeLeftSec(ROUND_DURATION_SEC);
-    setPhase('RACE_ACTIVE');
-    setWinningReveal(null);
-
-    // Reset contestant step counters for race
-    setContestants((prev) =>
-      prev.map((c) => ({
-        ...c,
-        currentStepCount: 0,
-        hasFinished: false,
-      }))
-    );
-
-    broadcastEvent({
-      action: 'GAME_START',
-      round: 1,
-      totalRounds: TOTAL_ROUNDS,
-      challenge: firstChallenge,
-    });
-  };
-
-  // Advance to Next Round (Host Action)
+  // Advance to Next Round (100% Procedural Dynamic Generator)
   const handleNextRound = () => {
     if (round >= TOTAL_ROUNDS) {
       setPhase('MATCH_OVER');
@@ -297,7 +364,7 @@ export const ChainTVView: React.FC = () => {
 
     sound.playRoundStart();
     const nextRound = round + 1;
-    const nextChallenge = challenges[nextRound - 1] || challenges[0];
+    const nextChallenge = generateRandomChainChallenge(usedPairsRef.current);
 
     setRound(nextRound);
     setCurrentChallenge(nextChallenge);
@@ -328,6 +395,8 @@ export const ChainTVView: React.FC = () => {
     setRound(1);
     setTimeLeftSec(ROUND_DURATION_SEC);
     setWinningReveal(null);
+    setPlayersReadyMap({});
+    setAutoStartCountdown(null);
     setContestants((prev) =>
       prev.map((c) => ({
         ...c,
@@ -335,6 +404,7 @@ export const ChainTVView: React.FC = () => {
         hasFinished: false,
         score: 0,
         roundWins: 0,
+        isReady: false,
       }))
     );
 
@@ -355,47 +425,45 @@ export const ChainTVView: React.FC = () => {
         round={phase !== 'LOBBY' ? round : undefined}
         totalRounds={TOTAL_ROUNDS}
         timeLeft={phase === 'RACE_ACTIVE' ? timeLeftSec : undefined}
-        onEndRoom={() => navigate('/')}
+        onEndRoom={handleTerminateRoom}
       />
 
       <main className="flex-1 flex flex-col p-4 md:p-8 max-w-6xl mx-auto w-full justify-between items-center">
         {/* =======================================================
-            STATE 1: LOBBY
+            STATE 1: LOBBY (CLEAN QR & ROOM CODE ONLY - NO URL TEXT)
             ======================================================= */}
         {phase === 'LOBBY' && (
-          <div className="flex-1 flex flex-col items-center justify-center w-full max-w-4xl space-y-8 animate-fade-in text-center my-auto">
-            <div className="space-y-3">
+          <div className="flex-1 flex flex-col items-center justify-center w-full max-w-3xl space-y-6 text-center my-auto">
+            <div className="space-y-2">
               <div className="inline-flex items-center gap-2 bg-[#8A9A5B] text-white px-4 py-1.5 rounded-full border-2 border-[#2C2A29] font-black text-sm shadow-[3px_3px_0px_#2C2A29]">
-                <span>🔗 لعبة العلاقات وزمالة اللاعبين</span>
+                <span>سِكّة اللاعبين</span>
               </div>
-              <h1 className="text-4xl md:text-6xl font-black text-[#2C2A29] tracking-tight">
+              <h1 className="text-4xl md:text-5xl font-black text-[#2C2A29] tracking-tight">
                 سِكّة اللاعبين
               </h1>
-              <p className="text-base md:text-xl font-bold text-[#5C4033] max-w-2xl mx-auto">
+              <p className="text-sm md:text-base font-bold text-[#5C4033] max-w-xl mx-auto">
                 من لاعب البداية إلى لاعب الهدف.. ابنِ أسرع سلسلة ربط بين اللاعبين عبر زملائهم في الأندية والمنتخبات!
               </p>
             </div>
 
-            {/* QR Code and Join Banner */}
-            <div className="flex flex-col md:flex-row items-center justify-center gap-8 bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-6 md:p-8 max-w-2xl w-full">
-              <div className="p-3 bg-white border-2 border-[#2C2A29] rounded-2xl shadow-[3px_3px_0px_#2C2A29]">
-                <QRCodeSVG value={joinUrl} size={150} />
+            {/* Brutalist QR Code & Room Code (BANNED: Any text URLs) */}
+            <div className="flex flex-col items-center justify-center bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-6 md:p-8 w-full max-w-md space-y-4">
+              <div className="border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] p-3 bg-[#F7F4EC] rounded-2xl">
+                <QRCodeSVG value={joinUrl} size={180} level="H" />
               </div>
-              <div className="text-right space-y-2">
-                <span className="text-xs font-black text-[#5C4033] block">امسح الكود أو ادخل عبر الرابط:</span>
-                <span className="font-mono text-xs bg-[#E5E0D5] px-3 py-1.5 rounded-lg border border-[#2C2A29] block select-all">
-                  {joinUrl}
-                </span>
-                <div className="pt-2">
-                  <span className="text-xs font-black text-[#8A9A5B] block">رمز الغرفة:</span>
-                  <span className="font-mono text-3xl font-black tracking-widest text-[#2C2A29]">
-                    {roomCode}
-                  </span>
-                </div>
+
+              <div className="text-center space-y-1">
+                <span className="text-xs font-black text-[#5C4033] block">رمز الغرفة:</span>
+                <h1 className="text-6xl sm:text-7xl font-black text-[#2C2A29] tracking-wider select-all font-mono">
+                  {roomCode}
+                </h1>
+                <p className="font-black text-lg text-[#2C2A29] mt-2">
+                  امسح الباركود أو أدخل الكود بالجوال
+                </p>
               </div>
             </div>
 
-            {/* Connected Contestants Grid */}
+            {/* Connected Contestants Grid with Solid Ready Badges */}
             <div className="w-full space-y-3">
               <div className="flex items-center justify-center gap-2 text-sm font-black text-[#5C4033]">
                 <Users size={18} />
@@ -404,30 +472,51 @@ export const ChainTVView: React.FC = () => {
 
               {contestants.length > 0 ? (
                 <div className="flex flex-wrap justify-center gap-3">
-                  {contestants.map((c) => (
-                    <div
-                      key={c.playerId}
-                      className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-4 py-2.5 rounded-2xl flex items-center gap-2.5"
-                    >
-                      {c.teamLogo && <img src={c.teamLogo} alt="" className="w-6 h-6 object-contain" />}
-                      <span className="font-black text-sm text-[#2C2A29]">{c.playerName}</span>
-                    </div>
-                  ))}
+                  {contestants.map((c) => {
+                    const isReady = playersReadyMap[c.playerId] || c.isReady;
+                    return (
+                      <div
+                        key={c.playerId}
+                        className={`bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-4 py-2.5 rounded-2xl flex items-center gap-3 ${
+                          isReady ? 'border-[#8A9A5B]' : 'border-[#2C2A29]'
+                        }`}
+                      >
+                        {c.teamLogo && <img src={c.teamLogo} alt="" className="w-6 h-6 object-contain" />}
+                        <span className="font-black text-sm text-[#2C2A29]">{c.playerName}</span>
+                        <span
+                          className={`text-xs font-black px-2.5 py-0.5 rounded-lg border border-[#2C2A29] ${
+                            isReady
+                              ? 'bg-[#8A9A5B] text-white'
+                              : 'bg-[#E5E0D5] text-[#5C4033]'
+                          }`}
+                        >
+                          {isReady ? 'جاهز' : 'في الانتظار'}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="text-sm font-bold text-[#5C4033]">بانتظار انضمام المتسابقين بالجوال...</p>
               )}
             </div>
 
-            {/* Host Start Button */}
-            <button
-              onClick={handleStartGame}
-              disabled={contestants.length === 0}
-              className="bg-[#8A9A5B] hover:bg-[#78884E] disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-lg py-4 px-12 rounded-2xl border-3 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all cursor-pointer flex items-center gap-3"
-            >
-              <Play size={22} />
-              <span>بدء سباق السلسلة</span>
-            </button>
+            {/* Auto Start Countdown Alert or Host Start Button */}
+            {autoStartCountdown !== null ? (
+              <div className="bg-[#8A9A5B] text-white font-black text-lg py-3 px-8 rounded-2xl border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29]">
+                الجميع جاهز! ستبدأ المنافسة خلال {autoStartCountdown}...
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleStartGame}
+                disabled={contestants.length === 0}
+                className="bg-[#8A9A5B] hover:bg-[#78884E] disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-lg py-4 px-12 rounded-2xl border-3 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all cursor-pointer flex items-center gap-3"
+              >
+                <Play size={22} />
+                <span>بدء اللعبة</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -435,17 +524,21 @@ export const ChainTVView: React.FC = () => {
             STATE 2: RACE ACTIVE (CENTER CONFRONTATION & LIVE TRACK)
             ======================================================= */}
         {phase === 'RACE_ACTIVE' && currentChallenge && (
-          <div className="flex-1 flex flex-col justify-between w-full space-y-6 animate-fade-in my-auto">
+          <div className="flex-1 flex flex-col justify-between w-full space-y-6 my-auto">
             {/* Center Confrontation Banner (Start -> Target) */}
             <div className="bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-6 md:p-8 flex items-center justify-between gap-4 text-center">
               {/* Start Player */}
               <div className="flex-1 flex flex-col items-center space-y-2">
                 <span className="text-xs font-black bg-[#8A9A5B] text-white px-3 py-1 rounded-full border border-[#2C2A29]">
-                  نقطة البداية 🏁
+                  نقطة البداية
                 </span>
                 <div className="w-20 h-20 md:w-28 md:h-28 bg-[#E5E0D5] border-3 border-[#2C2A29] rounded-2xl overflow-hidden shadow-[3px_3px_0px_#2C2A29] flex items-center justify-center">
-                  {currentChallenge.startPlayer.photoUrl ? (
-                    <img src={currentChallenge.startPlayer.photoUrl} alt="" className="w-full h-full object-cover" />
+                  {currentChallenge.startPlayer.photo || currentChallenge.startPlayer.photoUrl ? (
+                    <img
+                      src={currentChallenge.startPlayer.photo || currentChallenge.startPlayer.photoUrl}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
                   ) : (
                     <User size={36} className="text-[#5C4033]" />
                   )}
@@ -454,31 +547,35 @@ export const ChainTVView: React.FC = () => {
                   {currentChallenge.startPlayer.name}
                 </h3>
                 <span className="text-xs font-bold text-[#5C4033]">
-                  {currentChallenge.startPlayer.nationality} • {currentChallenge.startPlayer.currentClub || currentChallenge.startPlayer.clubs[0]}
+                  {currentChallenge.startPlayer.nationalTeam || currentChallenge.startPlayer.nationality || ''}
                 </span>
               </div>
 
               {/* Glowing Arrow & Mystery Hops */}
               <div className="flex flex-col items-center space-y-2 px-4 shrink-0">
                 <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] px-3 py-1 rounded-xl text-xs font-black text-[#5C4033]">
-                  أقصر طريق: {currentChallenge.minHops} خطوات
+                  المسار مفتوح للربط
                 </div>
-                <div className="text-2xl md:text-4xl font-black text-[#C68B59] animate-pulse">
+                <div className="text-2xl md:text-4xl font-black text-[#C68B59]">
                   ──────────▶
                 </div>
                 <span className="text-[11px] font-bold text-[#5C4033]">
-                  ابحث عن الزملاء المشتركين!
+                  ابحث عن الزملاء المشتركين
                 </span>
               </div>
 
               {/* Target Player */}
               <div className="flex-1 flex flex-col items-center space-y-2">
                 <span className="text-xs font-black bg-[#C68B59] text-white px-3 py-1 rounded-full border border-[#2C2A29]">
-                  الهدف النهائي 🎯
+                  الهدف النهائي
                 </span>
                 <div className="w-20 h-20 md:w-28 md:h-28 bg-[#E5E0D5] border-3 border-[#2C2A29] rounded-2xl overflow-hidden shadow-[3px_3px_0px_#2C2A29] flex items-center justify-center">
-                  {currentChallenge.targetPlayer.photoUrl ? (
-                    <img src={currentChallenge.targetPlayer.photoUrl} alt="" className="w-full h-full object-cover" />
+                  {currentChallenge.targetPlayer.photo || currentChallenge.targetPlayer.photoUrl ? (
+                    <img
+                      src={currentChallenge.targetPlayer.photo || currentChallenge.targetPlayer.photoUrl}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
                   ) : (
                     <Trophy size={36} className="text-[#C68B59]" />
                   )}
@@ -487,7 +584,7 @@ export const ChainTVView: React.FC = () => {
                   {currentChallenge.targetPlayer.name}
                 </h3>
                 <span className="text-xs font-bold text-[#5C4033]">
-                  {currentChallenge.targetPlayer.nationality} • {currentChallenge.targetPlayer.currentClub || currentChallenge.targetPlayer.clubs[0]}
+                  {currentChallenge.targetPlayer.nationalTeam || currentChallenge.targetPlayer.nationality || ''}
                 </span>
               </div>
             </div>
@@ -504,10 +601,9 @@ export const ChainTVView: React.FC = () => {
                 </span>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {contestants.map((c) => {
                   const stepNumber = c.currentStepCount;
-                  const maxDisplaySteps = 5;
 
                   return (
                     <div
@@ -527,7 +623,7 @@ export const ChainTVView: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Horizontal Step Progression Line */}
+                      {/* Horizontal Step Progression Line (Stationary) */}
                       <div className="flex-1 flex items-center gap-2 relative">
                         {[0, 1, 2, 3, 4, 5].map((stepIdx) => {
                           const isReached = stepNumber >= stepIdx;
@@ -536,15 +632,15 @@ export const ChainTVView: React.FC = () => {
                           return (
                             <div key={stepIdx} className="flex-1 flex items-center">
                               <div
-                                className={`w-8 h-8 rounded-xl border-2 border-[#2C2A29] flex items-center justify-center font-mono font-black text-xs transition-all ${
+                                className={`w-8 h-8 rounded-xl border-2 border-[#2C2A29] flex items-center justify-center font-mono font-black text-xs transition-colors ${
                                   isCurrent
-                                    ? 'bg-[#C68B59] text-white scale-110 shadow-[2px_2px_0px_#2C2A29]'
+                                    ? 'bg-[#C68B59] text-white shadow-[2px_2px_0px_#2C2A29]'
                                     : isReached
                                     ? 'bg-[#8A9A5B] text-white'
                                     : 'bg-[#E5E0D5] text-[#5C4033]'
                                 }`}
                               >
-                                {stepIdx === 0 ? '🏁' : stepIdx}
+                                {stepIdx === 0 ? '0' : stepIdx}
                               </div>
                               {stepIdx < 5 && (
                                 <div
@@ -569,11 +665,11 @@ export const ChainTVView: React.FC = () => {
             STATE 3: ROUND PODIUM & DRAMATIC CHAIN REVEAL
             ======================================================= */}
         {phase === 'ROUND_PODIUM' && winningReveal && (
-          <div className="flex-1 flex flex-col items-center justify-center w-full space-y-6 animate-fade-in text-center my-auto">
+          <div className="flex-1 flex flex-col items-center justify-center w-full space-y-6 text-center my-auto">
             {/* Winner Celebration Banner */}
             <div className="bg-[#8A9A5B] text-white border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-6 md:p-8 max-w-2xl w-full space-y-2">
               <span className="text-xs font-black uppercase tracking-wider bg-[#2C2A29] text-white px-3 py-1 rounded-full inline-block">
-                {round >= TOTAL_ROUNDS ? 'بطل المباراة النهائي 🏆' : `بطل الجولة ${round} 🥇`}
+                {round >= TOTAL_ROUNDS ? 'بطل المباراة النهائي' : `بطل الجولة ${round}`}
               </span>
               <div className="flex items-center justify-center gap-3">
                 {winningReveal.winnerTeamLogo && (
@@ -616,6 +712,7 @@ export const ChainTVView: React.FC = () => {
             <div className="flex items-center justify-center gap-4 pt-2">
               {round < TOTAL_ROUNDS ? (
                 <button
+                  type="button"
                   onClick={handleNextRound}
                   className="bg-[#C68B59] hover:bg-[#B57A48] text-white border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none py-3.5 px-8 rounded-2xl font-black text-base flex items-center gap-2 cursor-pointer transition-all"
                 >
@@ -624,6 +721,7 @@ export const ChainTVView: React.FC = () => {
                 </button>
               ) : (
                 <button
+                  type="button"
                   onClick={() => setPhase('MATCH_OVER')}
                   className="bg-[#8A9A5B] hover:bg-[#78884E] text-white border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] py-3.5 px-8 rounded-2xl font-black text-base flex items-center gap-2 cursor-pointer transition-all"
                 >
@@ -639,11 +737,10 @@ export const ChainTVView: React.FC = () => {
             STATE 4: MATCH OVER (FINAL LEADERBOARD)
             ======================================================= */}
         {phase === 'MATCH_OVER' && (
-          <div className="flex-1 flex flex-col items-center justify-center w-full max-w-3xl space-y-6 animate-fade-in text-center my-auto">
+          <div className="flex-1 flex flex-col items-center justify-center w-full max-w-3xl space-y-6 text-center my-auto">
             <div className="space-y-2">
-              <span className="text-4xl">👑</span>
               <h2 className="text-4xl md:text-5xl font-black text-[#2C2A29]">
-                اختتام منافسة سِكّة اللاعبين!
+                اختتام منافسة سِكّة اللاعبين
               </h2>
               <p className="text-sm font-bold text-[#5C4033]">
                 جدول الترتيب النهائي عبر الجولات الخمس:
@@ -679,15 +776,17 @@ export const ChainTVView: React.FC = () => {
 
             <div className="flex items-center gap-4 pt-4">
               <button
+                type="button"
                 onClick={handleResetLobby}
-                className="bg-[#C68B59] text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] py-3 px-6 rounded-xl font-black text-sm flex items-center gap-2 cursor-pointer"
+                className="bg-[#C68B59] hover:bg-[#B57A48] text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] py-3 px-6 rounded-xl font-black text-sm flex items-center gap-2 cursor-pointer"
               >
                 <RotateCcw size={16} />
                 <span>إعادة اللعب من البداية</span>
               </button>
               <button
+                type="button"
                 onClick={() => navigate('/')}
-                className="bg-[#F7F4EC] text-[#2C2A29] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] py-3 px-6 rounded-xl font-black text-sm cursor-pointer"
+                className="bg-[#F7F4EC] hover:bg-white text-[#2C2A29] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] py-3 px-6 rounded-xl font-black text-sm cursor-pointer"
               >
                 العودة للرئيسية
               </button>

@@ -13,7 +13,6 @@ import {
 import {
   getConnectingEntity,
   normalizePlayerName,
-  findChainPlayer,
   toChainPlayer,
 } from '../../../utils/footballChainEngine';
 import { searchFootballPlayers } from '../../../utils/footballSearch';
@@ -21,14 +20,11 @@ import { FootballPlayer } from '../../../data/footballMasterData';
 import { DRAFT_CURATED_CLUBS, DraftClub } from '../../../data/draftClubs';
 import { sound } from '../../../lib/audio';
 import {
-  ArrowLeft,
   RotateCcw,
   Trophy,
   CheckCircle2,
   AlertTriangle,
-  Flag,
   User,
-  Zap,
   Sparkles,
   RefreshCw,
 } from 'lucide-react';
@@ -38,7 +34,7 @@ export const ChainMobileView: FC = () => {
   const navigate = useNavigate();
   const roomCode = (rawCode || '000000').toUpperCase();
 
-  // Player Profile
+  // Player Profile - Check party_player_name or chain_player_name for auto-join bypass
   const [playerId] = useState<string>(() => {
     let pid = sessionStorage.getItem('chain_player_id') || sessionStorage.getItem('party_player_id');
     if (!pid) {
@@ -50,7 +46,7 @@ export const ChainMobileView: FC = () => {
   });
 
   const [playerName, setPlayerName] = useState<string>(() => {
-    return sessionStorage.getItem('chain_player_name') || '';
+    return sessionStorage.getItem('party_player_name') || sessionStorage.getItem('chain_player_name') || '';
   });
 
   const [selectedClub, setSelectedClub] = useState<DraftClub>(() => {
@@ -64,8 +60,10 @@ export const ChainMobileView: FC = () => {
     return DRAFT_CURATED_CLUBS[0]; // Guaranteed Default: Al-Hilal
   });
 
+  // Auto-Join Bypass: If a name exists from a previous room/step, skip name input form completely
   const [hasJoined, setHasJoined] = useState<boolean>(() => {
-    return !!sessionStorage.getItem('chain_player_name');
+    const existing = sessionStorage.getItem('party_player_name') || sessionStorage.getItem('chain_player_name');
+    return !!existing && existing.trim().length > 0;
   });
 
   const [isReady, setIsReady] = useState<boolean>(false);
@@ -83,11 +81,9 @@ export const ChainMobileView: FC = () => {
 
   // Input & Autocomplete State
   const [query, setQuery] = useState<string>('');
-  const [selectedCandidate, setSelectedCandidate] = useState<FootballPlayer | null>(null);
 
-  // Validation Feedback & Shake
+  // Validation Feedback (Stationary solid shifts)
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'error' | 'success' } | null>(null);
-  const [isShaking, setIsShaking] = useState<boolean>(false);
   const [hasFinishedCurrentRound, setHasFinishedCurrentRound] = useState<boolean>(false);
   const [readyForNextRound, setReadyForNextRound] = useState<boolean>(false);
 
@@ -133,11 +129,21 @@ export const ChainMobileView: FC = () => {
     setChainSteps([]);
     setUsedPlayerIds(new Set([challenge.startPlayer.id]));
     setQuery('');
-    setSelectedCandidate(null);
     setFeedbackMessage(null);
     setHasFinishedCurrentRound(false);
     setReadyForNextRound(false);
   }, []);
+
+  // Contestant Manual Exit ([خروج])
+  const handleExit = useCallback(() => {
+    sound.playClick();
+    if (channelRef.current) {
+      channelRef.current.untrack();
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+    navigate('/');
+  }, [navigate]);
 
   // Supabase Realtime Channel
   useEffect(() => {
@@ -184,12 +190,13 @@ export const ChainMobileView: FC = () => {
           if (ev.targetPlayerId === playerIdRef.current) {
             sessionStorage.removeItem('chain_player_id');
             sessionStorage.removeItem('chain_player_name');
+            sessionStorage.removeItem('party_player_name');
             sessionStorage.removeItem('chain_player_club');
             alert('تم استبعادك من الغرفة من قِبل المضيف');
             navigate('/', { replace: true });
           }
-        } else if (ev.action === 'ROOM_TERMINATED') {
-          alert('تم إنهاء الغرفة من قِبل المضيف');
+        } else if (ev.action === 'TERMINATE_ROOM' || ev.action === 'ROOM_TERMINATED') {
+          alert('تم إنهاء الغرفة من المضيف');
           navigate('/');
         }
       })
@@ -197,7 +204,8 @@ export const ChainMobileView: FC = () => {
         if (!isMounted) return;
         if (status === 'SUBSCRIBED') {
           isSubscribedRef.current = true;
-          if (hasJoinedRef.current) {
+          // Auto-track presence if already joined
+          if (hasJoinedRef.current && playerNameRef.current) {
             channel.track({
               id: playerIdRef.current,
               name: playerNameRef.current,
@@ -223,7 +231,7 @@ export const ChainMobileView: FC = () => {
     };
   }, [roomCode, playerId, navigate, initChallengeChain]);
 
-  // Join Room
+  // Join Room (Fallback if not already saved in sessionStorage)
   const handleJoin = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const cleanName = playerName.trim();
@@ -232,6 +240,7 @@ export const ChainMobileView: FC = () => {
     sound.playClick();
     sessionStorage.setItem('chain_player_id', playerId);
     sessionStorage.setItem('chain_player_name', cleanName);
+    sessionStorage.setItem('party_player_name', cleanName);
     sessionStorage.setItem('chain_player_club', JSON.stringify(selectedClub));
     setHasJoined(true);
 
@@ -256,15 +265,13 @@ export const ChainMobileView: FC = () => {
     }
   };
 
-  // Trigger feedback with haptics
+  // Trigger feedback with haptics (Stationary - no shaking animations)
   const triggerError = (msg: string) => {
     sound.playIncorrect();
     try {
       if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
     } catch {}
     setFeedbackMessage({ text: msg, type: 'error' });
-    setIsShaking(true);
-    setTimeout(() => setIsShaking(false), 500);
   };
 
   const triggerSuccess = (msg: string) => {
@@ -283,14 +290,14 @@ export const ChainMobileView: FC = () => {
 
     // 1. Anti-Looping Rule
     if (usedPlayerIds.has(candidateChain.id)) {
-      triggerError(`لا يمكنك تكرار لاعب (${candidateChain.name}) استخدمته مسبقاً في السلسلة!`);
+      triggerError('لا يمكنك تكرار لاعب استخدمته مسبقاً في السلسلة!');
       return;
     }
 
-    // 2. Validate Teammate Relationship
+    // 2. Validate Teammate Relationship (0ms Instant Intersection)
     const connectingEntity = getConnectingEntity(currentPlayer, candidateChain);
     if (!connectingEntity) {
-      triggerError(`لم يتزاملا (${currentPlayer.name}) و (${candidateChain.name}) في أي نادٍ أو منتخب!`);
+      triggerError('لم يتزاملا في أي نادٍ أو منتخب!');
       return;
     }
 
@@ -311,7 +318,6 @@ export const ChainMobileView: FC = () => {
     setUsedPlayerIds(nextUsed);
     setCurrentPlayer(candidateChain);
     setQuery('');
-    setSelectedCandidate(null);
 
     // Check if we hit the target player!
     const isTargetReached =
@@ -319,7 +325,7 @@ export const ChainMobileView: FC = () => {
       normalizePlayerName(candidateChain.name) === normalizePlayerName(currentChallenge.targetPlayer.name);
 
     if (isTargetReached) {
-      triggerSuccess(`مبروك! وصلت إلى لاعب الهدف (${candidateChain.name}) في ${newStepNumber} خطوات! 🏆`);
+      triggerSuccess(`وصلت إلى لاعب الهدف (${candidateChain.name}) في ${newStepNumber} خطوات!`);
       setHasFinishedCurrentRound(true);
 
       const bonusPoints = newStepNumber <= 3 ? 2 : 0;
@@ -347,7 +353,7 @@ export const ChainMobileView: FC = () => {
         winningReveal: reveal,
       });
     } else {
-      triggerSuccess(`رابط صحيح! (${connectingEntity}) ──> واصل نحو ${currentChallenge.targetPlayer.name}!`);
+      triggerSuccess(`رابط صحيح (${connectingEntity})! واصل نحو ${currentChallenge.targetPlayer.name}`);
 
       // Inform TV of live track progress
       broadcastEvent({
@@ -374,7 +380,6 @@ export const ChainMobileView: FC = () => {
     setUsedPlayerIds(newUsed);
     setCurrentPlayer(lastStep.fromPlayer);
     setQuery('');
-    setSelectedCandidate(null);
     setFeedbackMessage({ text: `تم التراجع خطوة إلى ${lastStep.fromPlayer.name}`, type: 'success' });
 
     broadcastEvent({
@@ -386,7 +391,7 @@ export const ChainMobileView: FC = () => {
   };
 
   // -----------------------------------------------------------------
-  // VIEW 1: JOIN SCREEN
+  // VIEW 1: JOIN SCREEN (Only if name was not previously stored)
   // -----------------------------------------------------------------
   if (!hasJoined) {
     return (
@@ -396,10 +401,7 @@ export const ChainMobileView: FC = () => {
       >
         <div className="w-full max-w-sm bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-6 space-y-6">
           <div className="text-center space-y-1">
-            <div className="w-16 h-16 bg-[#8A9A5B] border-2 border-[#2C2A29] rounded-2xl mx-auto flex items-center justify-center text-white text-3xl shadow-[3px_3px_0px_#2C2A29]">
-              🔗
-            </div>
-            <h1 className="text-2xl font-black text-[#2C2A29] pt-2">سِكّة اللاعبين</h1>
+            <h1 className="text-2xl font-black text-[#2C2A29]">سِكّة اللاعبين</h1>
             <p className="text-xs font-bold text-[#5C4033]">
               ابنِ أسرع سلسلة ربط بين اللاعبين عبر الأندية والمنتخبات!
             </p>
@@ -415,7 +417,7 @@ export const ChainMobileView: FC = () => {
                 value={playerName}
                 onChange={(e) => setPlayerName(e.target.value)}
                 placeholder="اكتب اسمك هنا..."
-                className="w-full bg-white border-2 border-[#2C2A29] rounded-xl px-4 py-3 font-bold text-sm text-[#2C2A29] focus:outline-none focus:bg-[#F7F4EC] transition-all shadow-[2px_2px_0px_#2C2A29]"
+                className="w-full bg-white border-2 border-[#2C2A29] rounded-xl px-4 py-3 font-bold text-sm text-[#2C2A29] focus:outline-none focus:bg-[#F7F4EC] shadow-[2px_2px_0px_#2C2A29]"
                 maxLength={20}
                 required
               />
@@ -442,7 +444,7 @@ export const ChainMobileView: FC = () => {
       className="min-h-screen w-full bg-[#E5E0D5] text-[#2C2A29] flex flex-col font-sans select-none overflow-x-hidden"
       dir="rtl"
     >
-      {/* Mobile Top Header */}
+      {/* Mobile Top Header: Player info, round indicator, room code & Ochre Exit Button */}
       <header className="w-full bg-[#E5E0D5] border-b-2 border-[#2C2A29] px-4 py-2.5 flex items-center justify-between shadow-sm shrink-0">
         <div className="flex items-center gap-2">
           {selectedClub && (
@@ -467,6 +469,14 @@ export const ChainMobileView: FC = () => {
           <span className="font-mono text-xs font-black text-[#5C4033] bg-[#F7F4EC] px-2 py-0.5 rounded-lg border border-[#2C2A29]">
             {roomCode}
           </span>
+          {/* Contestant Exit Button ([خروج]) */}
+          <button
+            type="button"
+            onClick={handleExit}
+            className="bg-[#C68B59] hover:bg-[#B57A48] text-white text-xs font-black px-3 py-1.5 rounded-lg border border-[#2C2A29] shadow-sm cursor-pointer transition-all active:translate-x-[1px] active:translate-y-[1px]"
+          >
+            خروج
+          </button>
         </div>
       </header>
 
@@ -476,7 +486,7 @@ export const ChainMobileView: FC = () => {
             STATE 1: LOBBY
             ======================================================= */}
         {phase === 'LOBBY' && (
-          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-6 py-8 animate-fade-in">
+          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-6 py-8">
             <div className="w-20 h-20 bg-white border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl flex items-center justify-center p-3">
               <img src={selectedClub.badgeUrl} alt={selectedClub.name} className="w-full h-full object-contain" />
             </div>
@@ -494,8 +504,18 @@ export const ChainMobileView: FC = () => {
                 sound.playClick();
                 const nextReady = !isReady;
                 setIsReady(nextReady);
+                if (channelRef.current) {
+                  channelRef.current.track({
+                    id: playerIdRef.current,
+                    name: playerNameRef.current,
+                    teamLogo: selectedClubRef.current.badgeUrl,
+                    teamName: selectedClubRef.current.name,
+                    joinedAt: Date.now(),
+                    isReady: nextReady,
+                  });
+                }
                 broadcastEvent({
-                  action: 'PLAYER_READY',
+                  action: 'PLAYER_READY_TOGGLE',
                   playerId: playerIdRef.current,
                   playerName: playerNameRef.current,
                   teamLogo: selectedClubRef.current.badgeUrl,
@@ -517,32 +537,33 @@ export const ChainMobileView: FC = () => {
             STATE 2: RACE ACTIVE
             ======================================================= */}
         {phase === 'RACE_ACTIVE' && currentChallenge && (
-          <div className="space-y-3 animate-fade-in">
+          <div className="space-y-3">
             {/* 1. Target Player Banner (Fixed Top Goal Card) */}
             <div className="bg-[#8A9A5B] text-white border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 bg-white rounded-xl border-2 border-[#2C2A29] p-1 flex items-center justify-center overflow-hidden shrink-0">
-                  {currentChallenge.targetPlayer.photoUrl ? (
-                    <img src={currentChallenge.targetPlayer.photoUrl} alt="" className="w-full h-full object-cover" />
+                  {currentChallenge.targetPlayer.photo || currentChallenge.targetPlayer.photoUrl ? (
+                    <img
+                      src={currentChallenge.targetPlayer.photo || currentChallenge.targetPlayer.photoUrl}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
                   ) : (
                     <Trophy size={22} className="text-[#8A9A5B]" />
                   )}
                 </div>
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-wider bg-[#2C2A29] text-white px-2 py-0.5 rounded-md inline-block">
-                    الهدف النهائي 🎯
+                    الهدف المطلوب
                   </span>
                   <h3 className="text-base sm:text-lg font-black leading-tight mt-0.5">
                     الوصول إلى: {currentChallenge.targetPlayer.name}
                   </h3>
-                  <span className="text-[11px] opacity-90 block">
-                    {currentChallenge.targetPlayer.nationality} • {currentChallenge.targetPlayer.currentClub || currentChallenge.targetPlayer.clubs[0]}
-                  </span>
                 </div>
               </div>
             </div>
 
-            {/* 2. Current Active Player Card (Where contestant is currently branching from) */}
+            {/* 2. Current Active Player Card (ZERO CLUB HINTS RULE) */}
             {currentPlayer && (
               <div className="bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-4 space-y-2">
                 <div className="flex items-center justify-between">
@@ -556,8 +577,12 @@ export const ChainMobileView: FC = () => {
 
                 <div className="flex items-center gap-3 pt-1">
                   <div className="w-14 h-14 bg-[#E5E0D5] rounded-xl border-2 border-[#2C2A29] flex items-center justify-center overflow-hidden shrink-0">
-                    {currentPlayer.photoUrl ? (
-                      <img src={currentPlayer.photoUrl} alt="" className="w-full h-full object-cover" />
+                    {currentPlayer.photo || currentPlayer.photoUrl ? (
+                      <img
+                        src={currentPlayer.photo || currentPlayer.photoUrl}
+                        alt=""
+                        className="w-full h-full object-cover"
+                      />
                     ) : (
                       <User size={26} className="text-[#5C4033]" />
                     )}
@@ -566,26 +591,22 @@ export const ChainMobileView: FC = () => {
                     <h2 className="text-xl font-black text-[#2C2A29] leading-tight">
                       {currentPlayer.name}
                     </h2>
-                    <p className="text-xs font-bold text-[#5C4033] mt-0.5">
-                      {currentPlayer.nationality} • أنديته: {currentPlayer.clubs.slice(0, 3).join('، ')}
+                    <p className="text-xs font-bold text-[#2C2A29]/70 mt-1">
+                      ابحث عن زميل لعب معه في أي نادٍ أو منتخب
                     </p>
                   </div>
                 </div>
-
-                <p className="text-xs font-bold text-[#8A9A5B] bg-[#E5E0D5] p-2 rounded-xl border border-[#2C2A29]/20">
-                  💡 اكتب اسم أي لاعب تزامَل مع <span className="font-black underline">{currentPlayer.name}</span> في نادٍ أو منتخب!
-                </p>
               </div>
             )}
 
-            {/* 3. Feedback Banner */}
+            {/* 3. Feedback Banner (Solid Stationary Shifts) */}
             {feedbackMessage && (
               <div
                 className={`p-3 rounded-xl border-2 border-[#2C2A29] text-xs font-black shadow-sm flex items-center gap-2 ${
                   feedbackMessage.type === 'error'
                     ? 'bg-[#C68B59] text-white'
                     : 'bg-[#8A9A5B] text-white'
-                } ${isShaking ? 'animate-shake' : ''}`}
+                }`}
               >
                 {feedbackMessage.type === 'error' ? <AlertTriangle size={16} /> : <Sparkles size={16} />}
                 <span>{feedbackMessage.text}</span>
@@ -599,12 +620,9 @@ export const ChainMobileView: FC = () => {
                   <input
                     type="text"
                     value={query}
-                    onChange={(e) => {
-                      setQuery(e.target.value);
-                      setSelectedCandidate(null);
-                    }}
-                    placeholder={`ابحث عن زميل لـ (${currentPlayer?.name})...`}
-                    className="w-full border-2 border-[#2C2A29] rounded-xl px-4 py-3 font-bold text-xs sm:text-sm text-[#2C2A29] focus:outline-none bg-white placeholder-[#5C4033]/60 focus:bg-[#F7F4EC] transition-all shadow-[2px_2px_0px_#2C2A29]"
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="اكتب اسم الزميل..."
+                    className="w-full border-2 border-[#2C2A29] rounded-xl px-4 py-3 font-bold text-xs sm:text-sm text-[#2C2A29] focus:outline-none bg-white placeholder-[#5C4033]/60 focus:bg-[#F7F4EC] shadow-[2px_2px_0px_#2C2A29]"
                   />
                 </div>
 
@@ -619,7 +637,7 @@ export const ChainMobileView: FC = () => {
                             key={p.id}
                             onClick={() => {
                               if (isAlreadyUsed) {
-                                triggerError('هذا اللاعب موجود مسبقاً في سلسلتك!');
+                                triggerError('لا يمكنك تكرار لاعب استخدمته مسبقاً في السلسلة!');
                                 return;
                               }
                               handleConnectTeammate(p);
@@ -634,9 +652,6 @@ export const ChainMobileView: FC = () => {
                               <span>{p.name}</span>
                               <span className="opacity-70 text-[10px]">({p.nationality})</span>
                             </div>
-                            <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-black/10">
-                              {p.currentClub || p.clubs[0]}
-                            </span>
                           </div>
                         );
                       })
@@ -657,13 +672,13 @@ export const ChainMobileView: FC = () => {
                     className="w-full bg-[#C68B59] hover:bg-[#B57A48] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-black py-2.5 px-4 rounded-xl border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] active:translate-x-[1px] active:translate-y-[1px] flex items-center justify-center gap-1.5 cursor-pointer transition-all"
                   >
                     <RotateCcw size={14} />
-                    <span>تراجع خطوة للخلف</span>
+                    <span>تراجع خطوة</span>
                   </button>
                 </div>
               </div>
             ) : (
               <div className="bg-[#8A9A5B] text-white p-4 rounded-2xl border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] text-center space-y-1">
-                <h3 className="text-lg font-black">أحسنت! أتممت السلسلة بنجاح 🏆</h3>
+                <h3 className="text-lg font-black">أحسنت! أتممت السلسلة بنجاح</h3>
                 <p className="text-xs font-bold opacity-90">
                   شاهد شاشة العرض الرئيسية الآن لمتابعة النتيجة وتتويج الجولة!
                 </p>
@@ -673,7 +688,7 @@ export const ChainMobileView: FC = () => {
             {/* 5. Live Chain Breadcrumbs (شريط السلسلة مع الروابط) */}
             <div className="space-y-1.5">
               <span className="text-xs font-black text-[#5C4033] block">
-                مسار سلسلتك حتى الآن ({chainSteps.length} خطوات):
+                شريط المسار ({chainSteps.length} خطوات):
               </span>
               <div className="bg-white border-2 border-[#2C2A29] p-3 rounded-2xl shadow-[2px_2px_0px_#2C2A29] overflow-x-auto flex items-center gap-2 text-xs font-bold scrollbar-thin">
                 <span className="bg-[#8A9A5B] text-white px-2.5 py-1 rounded-lg shrink-0 border border-[#2C2A29]">
@@ -698,9 +713,9 @@ export const ChainMobileView: FC = () => {
             STATE 3: ROUND PODIUM & NEXT ROUND
             ======================================================= */}
         {phase === 'ROUND_PODIUM' && (
-          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-5 py-4 animate-fade-in">
-            <div className="w-16 h-16 bg-[#8A9A5B] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl flex items-center justify-center text-3xl animate-bounce text-white">
-              👑
+          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-5 py-4">
+            <div className="w-16 h-16 bg-[#8A9A5B] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl flex items-center justify-center text-3xl text-white">
+              <Trophy size={32} />
             </div>
 
             <div className="space-y-1">
@@ -736,7 +751,7 @@ export const ChainMobileView: FC = () => {
                   readyForNextRound ? 'bg-[#8A9A5B] text-white' : 'bg-[#C68B59] text-white'
                 }`}
               >
-                <RefreshCw size={18} className={readyForNextRound ? 'animate-spin' : ''} />
+                <RefreshCw size={18} />
                 <span>{readyForNextRound ? 'جاهز للجولة التالية ✓' : 'جاهز للجولة التالية'}</span>
               </button>
             )}
