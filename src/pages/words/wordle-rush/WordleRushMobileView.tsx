@@ -15,6 +15,8 @@ import { roomBus, cleanRoomCode } from '../../../lib/roomBus';
 import { sound } from '../../../lib/audio';
 import { isValidArabicWord, normalizeArabic } from '../../../utils/arabicDictionary';
 import { TileStatus, evaluateWordleGuess } from './wordsBank';
+import { GameTopBar } from '../../../components/layout/GameTopBar';
+import { MobileReadyButton } from '../../../components/common/MobileReadyButton';
 
 interface WordleRushMobileViewProps {
   channel?: any;
@@ -26,7 +28,7 @@ interface WordleRushMobileViewProps {
 const ARABIC_KEYBOARD_ROWS = [
   ['ض', 'ص', 'ث', 'ق', 'ف', 'غ', 'ع', 'ه', 'خ', 'ح', 'ج', 'د'],
   ['ش', 'س', 'ي', 'ب', 'ل', 'ا', 'ت', 'ن', 'م', 'ك', 'ط'],
-  ['ئ', 'ء', 'ؤ', 'ر', 'لا', 'ى', 'ة', 'و', 'ز', 'ظ', 'ذ']
+  ['ئ', 'ء', 'ؤ', 'ر', 'ى', 'و', 'ز', 'ظ', 'ذ']
 ];
 
 export const WordleRushMobileView: React.FC<WordleRushMobileViewProps> = ({
@@ -181,22 +183,23 @@ export const WordleRushMobileView: React.FC<WordleRushMobileViewProps> = ({
   };
 
   // Keyboard typing
-  const handleKeyPress = (char: string) => {
+  const handleKeyPress = useCallback((char: string) => {
     if (isSolved || isFailed || roundEnded || guesses.length >= 6) return;
     if (currentInput.length >= 5) return;
+    const finalChar = char === 'ة' ? 'ه' : char;
     sound.playClick();
-    setCurrentInput(prev => prev + char);
-  };
+    setCurrentInput(prev => prev + finalChar);
+  }, [isSolved, isFailed, roundEnded, guesses.length, currentInput.length]);
 
-  const handleBackspace = () => {
+  const handleBackspace = useCallback(() => {
     if (isSolved || isFailed || roundEnded) return;
     if (currentInput.length === 0) return;
     sound.playClick();
     setCurrentInput(prev => prev.slice(0, -1));
-  };
+  }, [isSolved, isFailed, roundEnded, currentInput.length]);
 
   // Submit guess
-  const handleEnter = () => {
+  const handleEnter = useCallback(() => {
     if (isSolved || isFailed || roundEnded) return;
 
     if (currentInput.length !== 5) {
@@ -225,14 +228,17 @@ export const WordleRushMobileView: React.FC<WordleRushMobileViewProps> = ({
       const next = { ...prev };
       Array.from(currentInput).forEach((ch, idx) => {
         const st = result[idx];
-        const curSt = next[ch];
-        if (st === 'correct') {
-          next[ch] = 'correct';
-        } else if (st === 'present' && curSt !== 'correct') {
-          next[ch] = 'present';
-        } else if (st === 'absent' && !curSt) {
-          next[ch] = 'absent';
-        }
+        const keysToUpdate = (ch === 'ه' || ch === 'ة') ? ['ه', 'ة'] : [ch];
+        keysToUpdate.forEach(k => {
+          const curSt = next[k];
+          if (st === 'correct') {
+            next[k] = 'correct';
+          } else if (st === 'present' && curSt !== 'correct') {
+            next[k] = 'present';
+          } else if (st === 'absent' && !curSt) {
+            next[k] = 'absent';
+          }
+        });
       });
       return next;
     });
@@ -273,72 +279,71 @@ export const WordleRushMobileView: React.FC<WordleRushMobileViewProps> = ({
     } else {
       sound.playClick();
     }
-  };
+  }, [isSolved, isFailed, roundEnded, currentInput, targetWord, guesses, guessResults, playerId, playerName, cleanCode, channel]);
+
+  // Physical Keyboard Typing Listener
+  useEffect(() => {
+    const handleWindowKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleEnter();
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        handleBackspace();
+      } else if (e.key.length === 1) {
+        let char = e.key;
+        if (char === 'ة') char = 'ه';
+        if (/^[\u0600-\u06FF]$/.test(char)) {
+          e.preventDefault();
+          handleKeyPress(char);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [handleEnter, handleBackspace, handleKeyPress]);
 
   // Top Bar Component
   const renderTopBar = () => (
-    <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-2.5 flex items-center justify-between mb-2">
-      <button
-        onClick={handleExitGame}
-        className="bg-[#C68B59] hover:bg-[#b0784a] text-white border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-3 py-1 rounded-xl font-black text-xs flex items-center gap-1 active:translate-y-0.5"
-      >
-        <LogOut className="w-3.5 h-3.5" />
-        <span>خروج</span>
-      </button>
-
-      <span className="font-black text-sm text-[#000000]">سباق ووردل</span>
-
-      <span className="text-xs font-bold text-[#5C4033]">
-        {guesses.length} / 6
-      </span>
-    </div>
+    <GameTopBar
+      roomCode={cleanCode}
+      gameTitle="سباق ووردل"
+      currentRound={currentRound}
+      totalRounds={3}
+      onExit={handleExitGame}
+    />
   );
 
-  // VIEW: LOBBY / WAITING (With 3D "جاهز" Auto-Advance Button)
+  // VIEW: LOBBY / WAITING (With Standardized Ready Button)
   if (!isRoundActive && !roundEnded) {
     return (
-      <div className="min-h-screen bg-[#E5E0D5] text-[#2C2A29] p-4 flex flex-col justify-between selection:bg-[#8A9A5B]">
+      <div className="min-h-screen bg-[#E5E0D5] text-[#2C2A29] flex flex-col justify-between selection:bg-[#8A9A5B]" dir="rtl">
         {renderTopBar()}
 
-        {/* Center Wait Card with 3D "جاهز" Button */}
-        <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-8 text-center my-auto">
-          <div className="w-16 h-16 bg-[#C68B59]/20 border-2 border-[#2C2A29] rounded-2xl flex items-center justify-center text-[#C68B59] mx-auto mb-4">
-            <Layers className="w-8 h-8" />
+        {/* Center Wait Card with Standardized Ready Button */}
+        <div className="p-4 flex-1 flex flex-col justify-between max-w-md mx-auto w-full">
+          <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-8 text-center my-auto">
+            <div className="w-16 h-16 bg-[#C68B59]/20 border-2 border-[#2C2A29] rounded-2xl flex items-center justify-center text-[#C68B59] mx-auto mb-4">
+              <Layers className="w-8 h-8" />
+            </div>
+            <h2 className="text-2xl font-black text-[#000000] mb-2">سباق ووردل</h2>
+            <p className="text-xs font-bold text-[#5C4033] mb-6">
+              بدون عداد وقت! أول من يفك الكلمة يفوز فوراً بالجولة. اضغط "أنا جاهز" للبدء التلقائي.
+            </p>
+
+            <MobileReadyButton isReady={isReady} onToggleReady={handleToggleReady} />
+
+            <span className="block text-[11px] font-bold text-[#5C4033] mt-4">
+              * عند جاهزية متسابقين فأكثر ينطلق العد التلقائي على الشاشة.
+            </span>
           </div>
-          <h2 className="text-2xl font-black text-[#000000] mb-2">سباق ووردل</h2>
-          <p className="text-xs font-bold text-[#5C4033] mb-6">
-            بدون عداد وقت! أول من يفك الكلمة يفوز فوراً بالجولة. اضغط "جاهز" للبدء التلقائي.
-          </p>
 
-          {/* 3D Circular "جاهز" Button */}
-          <button
-            onClick={handleToggleReady}
-            className={`w-28 h-28 rounded-full border-3 border-[#2C2A29] mx-auto flex flex-col items-center justify-center font-black transition-all select-none ${
-              isReady
-                ? 'bg-stone-400 text-stone-800 shadow-[1px_1px_0px_#2C2A29] translate-y-1'
-                : 'bg-[#8A9A5B] text-white shadow-[4px_4px_0px_#2C2A29] hover:-translate-y-1 active:translate-y-0.5'
-            }`}
-          >
-            {isReady ? (
-              <>
-                <Check className="w-8 h-8 mb-1" />
-                <span className="text-sm">جاهز ✓</span>
-              </>
-            ) : (
-              <>
-                <Check className="w-8 h-8 mb-1" />
-                <span className="text-base">أنا جاهز!</span>
-              </>
-            )}
-          </button>
-
-          <span className="block text-[11px] font-bold text-[#5C4033] mt-4">
-            * عند جاهزية متسابقين فأكثر ينطلق العد التلقائي على الشاشة.
-          </span>
-        </div>
-
-        <div className="text-center text-xs font-bold text-[#5C4033]">
-          لعبة المجلس تبدأ هنا • طق عصي
+          <div className="text-center text-xs font-bold text-[#5C4033] pb-2">
+            لعبة المجلس تبدأ هنا • طق عصي
+          </div>
         </div>
       </div>
     );
@@ -347,42 +352,33 @@ export const WordleRushMobileView: React.FC<WordleRushMobileViewProps> = ({
   // VIEW: ROUND ENDED REVEAL
   if (roundEnded) {
     return (
-      <div className="min-h-screen bg-[#E5E0D5] text-[#2C2A29] p-4 flex flex-col justify-between selection:bg-[#8A9A5B]">
+      <div className="min-h-screen bg-[#E5E0D5] text-[#2C2A29] flex flex-col justify-between selection:bg-[#8A9A5B]" dir="rtl">
         {renderTopBar()}
 
-        <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 text-center my-auto">
-          <span className="text-xs font-black text-[#5C4033] block mb-2">الكلمة السرية كانت:</span>
-          <div className="flex justify-center gap-2 mb-4">
-            {Array.from(revealedWord).map((letter, idx) => (
-              <div
-                key={idx}
-                className="w-12 h-12 bg-[#8A9A5B] text-white border-2 border-[#2C2A29] rounded-xl flex items-center justify-center text-2xl font-black shadow-[2px_2px_0px_#2C2A29]"
-              >
-                {letter}
-              </div>
-            ))}
+        <div className="p-4 flex-1 flex flex-col justify-between max-w-md mx-auto w-full">
+          <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 text-center my-auto">
+            <span className="text-xs font-black text-[#5C4033] block mb-2">الكلمة السرية كانت:</span>
+            <div className="flex justify-center gap-2 mb-4">
+              {Array.from(revealedWord).map((letter, idx) => (
+                <div
+                  key={idx}
+                  className="w-12 h-12 bg-[#8A9A5B] text-white border-2 border-[#2C2A29] rounded-xl flex items-center justify-center text-2xl font-black shadow-[2px_2px_0px_#2C2A29]"
+                >
+                  {letter}
+                </div>
+              ))}
+            </div>
+
+            <p className="text-base font-black text-[#000000] mb-6">
+              {roundOutcomeText}
+            </p>
+
+            <MobileReadyButton isReady={isReady} onToggleReady={handleToggleReady} />
           </div>
 
-          <p className="text-base font-black text-[#000000] mb-6">
-            {roundOutcomeText}
-          </p>
-
-          {/* 3D "جاهز للجولة التالية" Button */}
-          <button
-            onClick={handleToggleReady}
-            className={`px-6 py-3.5 rounded-xl border-2 border-[#2C2A29] font-black text-sm flex items-center justify-center gap-2 mx-auto transition-all ${
-              isReady
-                ? 'bg-stone-400 text-stone-800 shadow-[1px_1px_0px_#2C2A29] translate-y-0.5'
-                : 'bg-[#8A9A5B] text-white shadow-[4px_4px_0px_#2C2A29] hover:-translate-y-0.5'
-            }`}
-          >
-            <Check className="w-4 h-4" />
-            <span>{isReady ? 'جاهز للجولة التالية ✓' : 'جاهز للجولة التالية ◄'}</span>
-          </button>
-        </div>
-
-        <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-xl p-3 text-center text-xs font-bold text-[#5C4033]">
-          بانتظار انطلاق الجولة التالية من الشاشة...
+          <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-xl p-3 text-center text-xs font-bold text-[#5C4033] pb-2">
+            بانتظار انطلاق الجولة التالية من الشاشة...
+          </div>
         </div>
       </div>
     );
@@ -390,129 +386,133 @@ export const WordleRushMobileView: React.FC<WordleRushMobileViewProps> = ({
 
   // VIEW: ACTIVE GAMEPLAY
   return (
-    <div className="min-h-screen bg-[#E5E0D5] text-[#2C2A29] p-2 flex flex-col justify-between selection:bg-[#8A9A5B]">
+    <div className="min-h-screen bg-[#E5E0D5] text-[#2C2A29] flex flex-col justify-between selection:bg-[#8A9A5B]" dir="rtl">
       {renderTopBar()}
 
-      {/* Error Message Toast */}
-      {errorMessage && (
-        <div className="bg-red-600 text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl py-1.5 px-3 text-center text-xs font-black mb-1 animate-bounce flex items-center justify-center gap-1.5">
-          <AlertCircle className="w-4 h-4" />
-          <span>{errorMessage}</span>
-        </div>
-      )}
+      <div className="p-2 sm:p-4 flex-1 flex flex-col justify-between max-w-md mx-auto w-full">
+        {/* Error Message Toast */}
+        {errorMessage && (
+          <div className="bg-red-600 text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl py-1.5 px-3 text-center text-xs font-black mb-1 flex items-center justify-center gap-1.5">
+            <AlertCircle className="w-4 h-4" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
 
-      {/* 6-Row Wordle Grid */}
-      <div className="flex flex-col gap-1.5 items-center justify-center my-auto py-1">
-        {[0, 1, 2, 3, 4, 5].map((rowIdx) => {
-          const isCurrentRow = rowIdx === guesses.length;
-          const isSubmittedRow = rowIdx < guesses.length;
-          const rowWord = isSubmittedRow ? guesses[rowIdx] : isCurrentRow ? currentInput : '';
-          const rowTiles = isSubmittedRow ? guessResults[rowIdx] : [];
-          const chars = Array.from(rowWord);
+        {/* 6-Row Wordle Grid */}
+        <div className="flex flex-col gap-1.5 items-center justify-center my-auto py-1">
+          {[0, 1, 2, 3, 4, 5].map((rowIdx) => {
+            const isCurrentRow = rowIdx === guesses.length;
+            const isSubmittedRow = rowIdx < guesses.length;
+            const rowWord = isSubmittedRow ? guesses[rowIdx] : isCurrentRow ? currentInput : '';
+            const rowTiles = isSubmittedRow ? guessResults[rowIdx] : [];
+            const chars = Array.from(rowWord);
 
-          return (
-            <div
-              key={rowIdx}
-              className={`flex gap-2 transition-transform ${
-                isCurrentRow && shakeRow ? 'animate-shake' : ''
-              }`}
-            >
-              {[0, 1, 2, 3, 4].map((colIdx) => {
-                const char = chars[colIdx] || '';
-                const tileStatus = rowTiles?.[colIdx];
+            return (
+              <div
+                key={rowIdx}
+                className={`flex gap-2 transition-transform ${
+                  isCurrentRow && shakeRow ? 'animate-shake' : ''
+                }`}
+              >
+                {[0, 1, 2, 3, 4].map((colIdx) => {
+                  const char = chars[colIdx] || '';
+                  const tileStatus = rowTiles?.[colIdx];
 
-                let bgClass = 'bg-[#F7F4EC] text-[#000000] border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29]';
-                if (tileStatus === 'correct') {
-                  bgClass = 'bg-[#8A9A5B] text-white border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29]';
-                } else if (tileStatus === 'present') {
-                  bgClass = 'bg-[#C68B59] text-white border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29]';
-                } else if (tileStatus === 'absent') {
-                  bgClass = 'bg-[#2C2A29] text-white border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29]';
-                } else if (isCurrentRow && char) {
-                  bgClass = 'bg-white text-[#000000] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] scale-105';
-                }
-
-                return (
-                  <div
-                    key={colIdx}
-                    className={`w-12 h-12 md:w-14 md:h-14 rounded-xl border-2 flex items-center justify-center text-xl md:text-2xl font-black select-none transition-all duration-200 ${bgClass}`}
-                  >
-                    {char}
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Solved / Failed Banner */}
-      {isSolved && (
-        <div className="bg-[#8A9A5B]/20 border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl p-2.5 text-center my-1">
-          <span className="font-black text-sm text-[#000000] block">أحسنت! فككت الكلمة بنجاح ✓</span>
-          <span className="text-[11px] font-bold text-[#5C4033]">بانتظار شاشة التلفاز لإعلان الفوز...</span>
-        </div>
-      )}
-
-      {isFailed && !isSolved && (
-        <div className="bg-red-100 border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl p-2.5 text-center my-1">
-          <span className="font-black text-sm text-red-800 block">استنفدت محاولاتك الـ 6!</span>
-          <span className="text-[11px] font-bold text-[#5C4033]">بانتظار بقية المتسابقين...</span>
-        </div>
-      )}
-
-      {/* JUMBO TOUCH-FRIENDLY KEYBOARD */}
-      {!isSolved && !isFailed && (
-        <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-2 mt-auto touch-manipulation">
-          <div className="flex flex-col gap-1.5">
-            {ARABIC_KEYBOARD_ROWS.map((row, rIdx) => (
-              <div key={rIdx} className="flex justify-center gap-1">
-                {/* Widen Enter Key on Bottom Row */}
-                {rIdx === 2 && (
-                  <button
-                    onClick={handleEnter}
-                    className="flex-[1.5] h-[52px] min-h-[52px] bg-[#8A9A5B] hover:bg-[#728247] text-white border border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-lg font-bold text-base flex items-center justify-center active:translate-y-0.5 select-none"
-                  >
-                    <span>تأكيد</span>
-                  </button>
-                )}
-
-                {row.map((char) => {
-                  const status = letterStatuses[char];
-                  let keyColor = 'bg-[#E5E0D5] text-[#000000]';
-                  if (status === 'correct') {
-                    keyColor = 'bg-[#8A9A5B] text-white';
-                  } else if (status === 'present') {
-                    keyColor = 'bg-[#C68B59] text-white';
-                  } else if (status === 'absent') {
-                    keyColor = 'bg-[#2C2A29] text-stone-400 opacity-60';
+                  let bgClass = 'bg-[#F7F4EC] text-[#000000] border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29]';
+                  if (tileStatus === 'correct') {
+                    bgClass = 'bg-[#8A9A5B] text-white border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29]';
+                  } else if (tileStatus === 'present') {
+                    bgClass = 'bg-[#C68B59] text-white border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29]';
+                  } else if (tileStatus === 'absent') {
+                    bgClass = 'bg-[#2C2A29] text-white border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29]';
+                  } else if (isCurrentRow && char) {
+                    bgClass = 'bg-white text-[#000000] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] scale-105';
                   }
 
                   return (
-                    <button
-                      key={char}
-                      onClick={() => handleKeyPress(char)}
-                      className={`flex-1 h-[52px] min-h-[52px] px-1 rounded-lg border border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] font-bold text-lg flex items-center justify-center active:translate-y-0.5 transition-colors select-none ${keyColor}`}
+                    <div
+                      key={colIdx}
+                      className={`w-12 h-12 md:w-14 md:h-14 rounded-xl border-2 flex items-center justify-center text-xl md:text-2xl font-black select-none transition-all duration-200 ${bgClass}`}
                     >
                       {char}
-                    </button>
+                    </div>
                   );
                 })}
-
-                {/* Widen Backspace Key on Bottom Row */}
-                {rIdx === 2 && (
-                  <button
-                    onClick={handleBackspace}
-                    className="flex-[1.5] h-[52px] min-h-[52px] bg-stone-300 hover:bg-stone-400 text-[#000000] border border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-lg font-bold text-sm flex items-center justify-center active:translate-y-0.5 select-none"
-                  >
-                    <Delete className="w-5 h-5" />
-                  </button>
-                )}
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
-      )}
+
+        {/* Solved / Failed Banner */}
+        {isSolved && (
+          <div className="bg-[#8A9A5B]/20 border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl p-2.5 text-center my-1">
+            <span className="font-black text-sm text-[#000000] block">أحسنت! فككت الكلمة بنجاح ✓</span>
+            <span className="text-[11px] font-bold text-[#5C4033]">بانتظار شاشة التلفاز لإعلان الفوز...</span>
+          </div>
+        )}
+
+        {isFailed && !isSolved && (
+          <div className="bg-red-100 border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl p-2.5 text-center my-1">
+            <span className="font-black text-sm text-red-800 block">استنفدت محاولاتك الـ 6!</span>
+            <span className="text-[11px] font-bold text-[#5C4033]">بانتظار بقية المتسابقين...</span>
+          </div>
+        )}
+
+        {/* JUMBO TOUCH-FRIENDLY KEYBOARD */}
+        {!isSolved && !isFailed && (
+          <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-2 sm:p-3 mt-auto touch-manipulation">
+            <div className="flex flex-col gap-1.5 sm:gap-2">
+              {ARABIC_KEYBOARD_ROWS.map((row, rIdx) => (
+                <div key={rIdx} className="flex justify-center gap-1 sm:gap-1.5">
+                  {/* Widen Enter Key on Bottom Row */}
+                  {rIdx === 2 && (
+                    <button
+                      onClick={handleEnter}
+                      className="flex-[1.8] h-[54px] min-h-[54px] sm:h-[60px] bg-[#8A9A5B] hover:bg-[#728247] text-white border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-xl font-black text-sm sm:text-base flex items-center justify-center active:translate-y-0.5 select-none cursor-pointer"
+                    >
+                      <span>تأكيد</span>
+                    </button>
+                  )}
+
+                  {row.map((char) => {
+                    const status = letterStatuses[char] || (char === 'ه' ? letterStatuses['ة'] : undefined);
+                    let keyColor = 'bg-[#E5E0D5] text-[#000000]';
+                    if (status === 'correct') {
+                      keyColor = 'bg-[#8A9A5B] text-white';
+                    } else if (status === 'present') {
+                      keyColor = 'bg-[#C68B59] text-white';
+                    } else if (status === 'absent') {
+                      keyColor = 'bg-[#2C2A29] text-stone-400 opacity-60';
+                    }
+
+                    const displayLabel = char === 'ه' ? 'ه/ة' : char;
+
+                    return (
+                      <button
+                        key={char}
+                        onClick={() => handleKeyPress(char)}
+                        className={`flex-1 h-[54px] min-h-[54px] sm:h-[60px] px-0.5 rounded-xl border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] font-black text-base sm:text-xl flex items-center justify-center active:translate-y-0.5 transition-colors select-none cursor-pointer ${keyColor}`}
+                      >
+                        {displayLabel}
+                      </button>
+                    );
+                  })}
+
+                  {/* Widen Backspace Key on Bottom Row */}
+                  {rIdx === 2 && (
+                    <button
+                      onClick={handleBackspace}
+                      className="flex-[1.5] h-[54px] min-h-[54px] sm:h-[60px] bg-stone-300 hover:bg-stone-400 text-[#000000] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-xl font-black text-sm flex items-center justify-center active:translate-y-0.5 select-none cursor-pointer"
+                    >
+                      <Delete className="w-5 h-5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

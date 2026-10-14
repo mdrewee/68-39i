@@ -380,7 +380,7 @@ export const PentagonClashTVView: React.FC = () => {
           <div className="flex items-center gap-4">
             {/* 60s Countdown Timer */}
             <div className={`flex items-center gap-2 px-5 py-2.5 border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl font-black text-xl ${
-              timeLeft <= 10 ? 'bg-red-500 text-white animate-pulse' : 'bg-[#F7F4EC] text-[#2C2A29]'
+              timeLeft <= 10 ? 'bg-[#C86D51] text-white' : 'bg-[#F7F4EC] text-[#2C2A29]'
             }`}>
               <Clock className="w-6 h-6" />
               <span>{timeLeft} ثانية</span>
@@ -417,8 +417,12 @@ export const PentagonClashTVView: React.FC = () => {
                 return (
                   <div
                     key={idx}
-                    style={{ left: `${x - 38}px`, top: `${y - 38}px` }}
-                    className="absolute w-[76px] h-[76px] bg-[#E5E0D5] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl flex items-center justify-center text-3xl font-black text-[#000000] select-none"
+                    style={{
+                      left: `${x - 40}px`,
+                      top: `${y - 40}px`,
+                      clipPath: 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)'
+                    }}
+                    className="absolute w-[80px] h-[80px] bg-[#E5E0D5] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] flex items-center justify-center text-3xl font-black text-[#000000] select-none"
                   >
                     {letter}
                   </div>
@@ -426,7 +430,12 @@ export const PentagonClashTVView: React.FC = () => {
               })}
 
               {/* Central Pentagon Cell */}
-              <div className="w-[96px] h-[96px] bg-[#C68B59] border-4 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl flex items-center justify-center text-5xl font-black text-white z-10 animate-bounce duration-1000">
+              <div
+                style={{
+                  clipPath: 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)'
+                }}
+                className="w-[100px] h-[100px] bg-[#C68B59] border-4 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] flex items-center justify-center text-5xl font-black text-white z-10"
+              >
                 {activeSeed.centerLetter}
               </div>
             </div>
@@ -434,7 +443,7 @@ export const PentagonClashTVView: React.FC = () => {
             {/* Ticker of recently claimed words */}
             <div className="w-full mt-4 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl p-2.5 min-h-[44px] flex items-center justify-center">
               {tickerItems.length > 0 ? (
-                <span className="text-sm font-black text-[#8A9A5B] animate-pulse">
+                <span className="text-sm font-black text-[#8A9A5B]">
                   {tickerItems[0]}
                 </span>
               ) : (

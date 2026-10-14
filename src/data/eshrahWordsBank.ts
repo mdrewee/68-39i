@@ -197,7 +197,41 @@ export const ESHRAH_WORDS_BANK: EshrahPromptItem[] = [
   { id: 'cn_17', category: 'countries', text: 'إسبانيا', forbiddenWords: ['مدريد', 'برشلونة', 'مصارعة ثيران', 'أندلس'] },
   { id: 'cn_18', category: 'countries', text: 'روسيا', forbiddenWords: ['موسكو', 'برد', 'بوتين', 'دب'] },
   { id: 'cn_19', category: 'countries', text: 'اليونان', forbiddenWords: ['أثينا', 'جزر', 'فلسفة', 'أبيض وأزرق'] },
-  { id: 'cn_20', category: 'countries', text: 'كوريا الجنوبية', forbiddenWords: ['سيول', 'كيبوب', 'دراما', 'سامسونج'] }
+  { id: 'cn_20', category: 'countries', text: 'كوريا الجنوبية', forbiddenWords: ['سيول', 'كيبوب', 'دراما', 'سامسونج'] },
+
+  // ==========================================
+  // كلمات حديثة إضافية (MODERN KEYWORDS)
+  // ==========================================
+  { id: 'mod_01', category: 'football', text: 'جود بيلينغهام', forbiddenWords: ['ريال مدريد', 'إنجلترا', 'احتفال فتح اليدين', 'وسط'] },
+  { id: 'mod_02', category: 'football', text: 'كيليان مبابي', forbiddenWords: ['فرنسا', 'باريس', 'سرعة', 'قناع'] },
+  { id: 'mod_03', category: 'football', text: 'دوري روشن', forbiddenWords: ['السعودية', 'صندوق الاستثمارات', 'نجوم', 'الدوري'] },
+  { id: 'mod_04', category: 'football', text: 'ديربي الرياض', forbiddenWords: ['الهلال', 'النصر', 'المملكة أرينا', 'قمة'] },
+  { id: 'mod_05', category: 'football', text: 'ياسين بونو', forbiddenWords: ['الهلال', 'المغرب', 'حارس', 'ابتسامة'] },
+  { id: 'mod_06', category: 'football', text: 'إرلينغ هالاند', forbiddenWords: ['مانشستر سيتي', 'النرويج', 'أهداف', 'فايكنج'] },
+  { id: 'mod_07', category: 'tv_series', text: 'البيت بيتي', forbiddenWords: ['بينو', 'كراكيري', 'قصر', 'رعب كوميدي'] },
+  { id: 'mod_08', category: 'tv_series', text: 'لعبة الحبار (Squid Game)', forbiddenWords: ['كوريا', 'دمية', 'أرقام', 'بدلة خضراء'] },
+  { id: 'mod_09', category: 'tv_series', text: 'سترينجر ثينقز', forbiddenWords: ['إيليفن', 'وحش', 'عالم مقلوب', 'ثمانينات'] },
+  { id: 'mod_10', category: 'tv_series', text: 'التاج (The Crown)', forbiddenWords: ['ملكة إنجلترا', 'بريطانيا', 'قصر', 'إليزابيث'] },
+  { id: 'mod_11', category: 'movies', text: 'أوبنهايمر', forbiddenWords: ['قنبلة نووية', 'فيزياء', 'نولان', 'انفجار'] },
+  { id: 'mod_12', category: 'movies', text: 'باربي', forbiddenWords: ['وردي', 'كين', 'عروسة', 'عالم مثالي'] },
+  { id: 'mod_13', category: 'movies', text: 'نورة', forbiddenWords: ['فيلم سعودي', 'كان', 'رسم', 'قرية'] },
+  { id: 'mod_14', category: 'movies', text: 'توب غان: مافريك', forbiddenWords: ['طيران', 'توم كروز', 'مقاتلة', 'سرعة'] },
+  { id: 'mod_15', category: 'tools', text: 'سماعة إيربودز', forbiddenWords: ['أبل', 'بلوتوث', 'أذن', 'شحن'] },
+  { id: 'mod_16', category: 'tools', text: 'سكوتر كهربائي', forbiddenWords: ['شحن', 'شارع', 'عجلتين', 'سرعة'] },
+  { id: 'mod_17', category: 'tools', text: 'طائرة درون', forbiddenWords: ['تصوير', 'ريموت', 'طيران', 'كاميرا'] },
+  { id: 'mod_18', category: 'tools', text: 'نظارة الواقع الافتراضي (VR)', forbiddenWords: ['ميتا', 'عدسات', 'ألعاب', 'عالم افتراضي'] },
+  { id: 'mod_19', category: 'tools', text: 'ساعة ذكية', forbiddenWords: ['أبل واتش', 'نبض', 'خطوات', 'شاشة'] },
+  { id: 'mod_20', category: 'tools', text: 'ماك بوك برو', forbiddenWords: ['أبل', 'لابتوب', 'تفاحة', 'برمجة'] },
+  { id: 'mod_21', category: 'food', text: 'سبانش لاتيه', forbiddenWords: ['حليب مكثف', 'قهوة', 'بارد', 'كافيه'] },
+  { id: 'mod_22', category: 'food', text: 'كوكيز كندر', forbiddenWords: ['بسكوت', 'شوكولاتة بيضاء', 'فرن', 'حلى'] },
+  { id: 'mod_23', category: 'food', text: 'فرنش توست بالكراميل', forbiddenWords: ['بريوش', 'بيض', 'فطور', 'آيسكريم'] },
+  { id: 'mod_24', category: 'food', text: 'شاي كرك', forbiddenWords: ['هيل', 'زعفران', 'حليب بوني', 'حار'] },
+  { id: 'mod_25', category: 'food', text: 'ماتشا باردة', forbiddenWords: ['شاي أخضر', 'ياباني', 'حليب لوز', 'مشروب'] },
+  { id: 'mod_26', category: 'food', text: 'برجر سماش ترَفِل', forbiddenWords: ['فطر', 'لحم مضغوط', 'خبز بطاطس', 'صوص'] },
+  { id: 'mod_27', category: 'food', text: 'شاي بوبا (فقاعات)', forbiddenWords: ['تابيوكا', 'قصبة عريضة', 'تايوان', 'كرات سوداء'] },
+  { id: 'mod_28', category: 'countries', text: 'آيسلندا', forbiddenWords: ['شفق قطبي', 'براكين', 'جليد', 'أوروبا'] },
+  { id: 'mod_29', category: 'countries', text: 'سنغافورة', forbiddenWords: ['مارينا باي', 'جزيرة', 'نظافة', 'حدائق'] },
+  { id: 'mod_30', category: 'countries', text: 'النرويج', forbiddenWords: ['مضايق مائية', 'برد', 'أوسلو', 'شمال'] }
 ];
 
 export const getPromptsForCategories = (

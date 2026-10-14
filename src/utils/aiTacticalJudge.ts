@@ -292,7 +292,7 @@ interface SlotEntry {
   isLegend: boolean;
 }
 
-function evaluateContestant(c: DraftContestant): SquadAIEvaluation {
+export function evaluateContestant(c: DraftContestant): SquadAIEvaluation {
   const entries: Partial<Record<DraftPosition, SlotEntry | null>> = {};
   const verifications: PlayerConditionVerification[] = [];
   let validCond = 0;
@@ -392,6 +392,8 @@ function evaluateContestant(c: DraftContestant): SquadAIEvaluation {
     },
   };
 }
+
+export const evaluateSquad = evaluateContestant;
 
 // ---------------------------------------------------------------------------
 // Squad → contestant merge (zero-loss)

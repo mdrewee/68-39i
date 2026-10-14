@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Clock, Trophy, Play, CheckCircle2, AlertOctagon, Flame } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { EshrahTopBar } from '../../../components/eshrah/EshrahTopBar';
+import { GameTopBar } from '../../../components/layout/GameTopBar';
 import { EshrahTVLobby } from '../../../components/eshrah/EshrahTVLobby';
 import { EshrahPodium } from '../../../components/eshrah/EshrahPodium';
 import {
@@ -13,7 +13,7 @@ import {
   EshrahPromptItem,
   EshrahGamePhase
 } from '../../../types/eshrah';
-import { getRandomPrompt } from '../../../data/eshrahWordsBank';
+import { getRandomPrompt, ESHRAH_CATEGORIES_CONFIG } from '../../../data/eshrahWordsBank';
 import { sound } from '../../../lib/audio';
 
 const ALL_CATEGORIES: EshrahCategory[] = [
@@ -28,6 +28,7 @@ export const ForbiddenWordsTVView: React.FC = () => {
   // State
   const [phase, setPhase] = useState<EshrahGamePhase>('TEAMS');
   const [players, setPlayers] = useState<EshrahPlayer[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<EshrahCategory[]>(ALL_CATEGORIES);
   const [activeTeam, setActiveTeam] = useState<EshrahTeamId>('team_1');
   const [currentRound, setCurrentRound] = useState<number>(1); // 1 to 3 per team (6 turns total)
   const [team1Score, setTeam1Score] = useState<number>(0);
@@ -164,6 +165,17 @@ export const ForbiddenWordsTVView: React.FC = () => {
     broadcastSync({ phase: 'PLAYING', timeLeft: 60 });
   };
 
+  const handleToggleCategory = (cat: EshrahCategory) => {
+    sound.playClick();
+    setSelectedCategories((prev) => {
+      if (prev.includes(cat)) {
+        if (prev.length === 1) return prev;
+        return prev.filter((c) => c !== cat);
+      }
+      return [...prev, cat];
+    });
+  };
+
   // Explainer reports: [جبتها ✓] or [مخالفة كلمة محظورة ✗]
   const handleTabooAction = (payload: { action: 'CORRECT' | 'VIOLATION' }) => {
     const { action } = payload;
@@ -184,7 +196,8 @@ export const ForbiddenWordsTVView: React.FC = () => {
     }
 
     // Load next card instantly
-    const nextPrompt = getRandomPrompt(ALL_CATEGORIES, usedPromptIds);
+    const cats = selectedCategories.length > 0 ? selectedCategories : ALL_CATEGORIES;
+    const nextPrompt = getRandomPrompt(cats, usedPromptIds);
     setUsedPromptIds((prev) => new Set([...prev, nextPrompt.id]));
     setCurrentPrompt(nextPrompt);
     currentPromptRef.current = nextPrompt;
@@ -222,7 +235,8 @@ export const ForbiddenWordsTVView: React.FC = () => {
       return;
     }
 
-    const newPrompt = getRandomPrompt(ALL_CATEGORIES, usedPromptIds);
+    const cats = selectedCategories.length > 0 ? selectedCategories : ALL_CATEGORIES;
+    const newPrompt = getRandomPrompt(cats, usedPromptIds);
     setUsedPromptIds((prev) => new Set([...prev, newPrompt.id]));
     setCurrentPrompt(newPrompt);
     setActiveTeam(nextTeam);
@@ -244,7 +258,8 @@ export const ForbiddenWordsTVView: React.FC = () => {
 
   // Launch Match from Lobby
   const handleLaunchMatch = () => {
-    const firstPrompt = getRandomPrompt(ALL_CATEGORIES, usedPromptIds);
+    const cats = selectedCategories.length > 0 ? selectedCategories : ALL_CATEGORIES;
+    const firstPrompt = getRandomPrompt(cats, usedPromptIds);
     setUsedPromptIds(new Set([firstPrompt.id]));
     setCurrentPrompt(firstPrompt);
     setActiveTeam('team_1');
@@ -293,15 +308,15 @@ export const ForbiddenWordsTVView: React.FC = () => {
       />
 
       {/* TopBar */}
-      <div className="relative z-20">
-        <EshrahTopBar
-          roomCode={roomCode}
-          gameTitle="كلمات محظورة"
-          phase={phase}
-          onTerminate={handleEndRoom}
-          onExit={handleEndRoom}
-        />
-      </div>
+      <GameTopBar
+        roomCode={roomCode}
+        isHost={true}
+        gameTitle="كلمات محظورة"
+        currentRound={phase !== 'TEAMS' ? currentRound : undefined}
+        totalRounds={phase !== 'TEAMS' ? 3 : undefined}
+        onTerminate={handleEndRoom}
+        onExit={handleEndRoom}
+      />
 
       <main className="flex-1 flex flex-col items-center justify-between p-4 md:p-6 relative z-10 max-w-6xl mx-auto w-full">
         {/* ================= 1. TEAMS (LOBBY) ================= */}
@@ -313,6 +328,9 @@ export const ForbiddenWordsTVView: React.FC = () => {
               gameRuleSnippet="شرح سريع وتخمين أكبر عدد من الكلمات في 60 ثانية بدون نطق الكلمات الأربع الممنوعة! الشارح يمسك جواله لرؤية الكلمة والمحظورات ويسجل النقاط بنفسه."
               players={players}
               onStartMatch={handleLaunchMatch}
+              categories={ESHRAH_CATEGORIES_CONFIG}
+              selectedCategories={selectedCategories}
+              onToggleCategory={handleToggleCategory}
             />
           </div>
         )}
@@ -333,7 +351,7 @@ export const ForbiddenWordsTVView: React.FC = () => {
 
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-8 shadow-[6px_6px_0px_#2C2A29] w-full flex flex-col items-center gap-5">
               <div className="w-16 h-16 rounded-2xl bg-[#8A9A5B]/15 border-2 border-[#8A9A5B] flex items-center justify-center text-[#8A9A5B]">
-                <Clock className="w-8 h-8 animate-pulse" />
+                <Clock className="w-8 h-8" />
               </div>
 
               <h3 className="text-2xl md:text-3xl font-black text-[#2C2A29]">
@@ -369,7 +387,7 @@ export const ForbiddenWordsTVView: React.FC = () => {
 
             {/* Giant Timer */}
             <div className={`flex items-center justify-center gap-3 px-10 py-4 rounded-3xl border-2 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] ${
-              timeLeft <= 10 ? 'bg-[#C86D51] text-white animate-pulse' : 'bg-[#F7F4EC] text-[#2C2A29]'
+              timeLeft <= 10 ? 'bg-[#C86D51] text-white' : 'bg-[#F7F4EC] text-[#2C2A29]'
             }`}>
               <Clock className="w-10 h-10" />
               <span className="text-6xl font-black font-mono tracking-wider">

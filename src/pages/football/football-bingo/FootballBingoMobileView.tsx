@@ -18,6 +18,8 @@ import { BingoTile } from './components/BingoTile';
 import { sound } from '../../../lib/audio';
 import { Trophy, Check, Sparkles } from 'lucide-react';
 import { FootballBingoTopBar } from './components/FootballBingoTopBar';
+import { GameTopBar } from '../../../components/layout/GameTopBar';
+import { MobileReadyButton } from '../../../components/common/MobileReadyButton';
 
 export const FootballBingoMobileView: React.FC = () => {
   const { code: rawCode } = useParams<{ code: string }>();
@@ -25,16 +27,21 @@ export const FootballBingoMobileView: React.FC = () => {
 
   // Player identity from session or localStorage
   const [playerId] = useState<string>(() => {
-    let id = sessionStorage.getItem('bingo_player_id');
+    let id = sessionStorage.getItem('party_player_id') || sessionStorage.getItem('bingo_player_id');
     if (!id) {
       id = 'p_' + Math.random().toString(36).substring(2, 9);
-      sessionStorage.setItem('bingo_player_id', id);
+      sessionStorage.setItem('party_player_id', id);
     }
     return id;
   });
 
-  const [playerName, setPlayerName] = useState<string>(() => {
-    return sessionStorage.getItem('player_name') || localStorage.getItem('player_name') || 'لاعب';
+  const [playerName] = useState<string>(() => {
+    return (
+      sessionStorage.getItem('party_player_name') ||
+      sessionStorage.getItem('player_name') ||
+      localStorage.getItem('player_name') ||
+      'متسابق'
+    );
   });
 
   // Game state
@@ -148,10 +155,34 @@ export const FootballBingoMobileView: React.FC = () => {
     }
   };
 
+  // Victory audio ref (strictly non-looping, cleanly stopped on unmount)
+  const victoryAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const playVictoryAudio = useCallback(() => {
+    try {
+      if (!victoryAudioRef.current) {
+        victoryAudioRef.current = new Audio('/sounds/victory.mp3');
+        victoryAudioRef.current.loop = false;
+      }
+      victoryAudioRef.current.currentTime = 0;
+      victoryAudioRef.current.play().catch(() => {});
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (victoryAudioRef.current) {
+        victoryAudioRef.current.pause();
+        victoryAudioRef.current = null;
+      }
+    };
+  }, []);
+
   // Claim Bingo victory
   const handleClaimBingo = () => {
     if (!isBingoAvailable) return;
     sound.playWhistle();
+    playVictoryAudio();
 
     broadcast({
       action: 'BINGO_CLAIM',
@@ -178,6 +209,14 @@ export const FootballBingoMobileView: React.FC = () => {
   // Mobile request next round
   const handleMobileNextRound = () => {
     sound.playClick();
+    setIsBingoAvailable(false);
+    setWinningIndices([]);
+    setRoundWinner(null);
+    setBoard(generatePlayerBingoBoard());
+    broadcast({
+      action: 'NEXT_ROUND_TRIGGER',
+      round: round + 1,
+    });
     broadcast({
       action: 'NEXT_ROUND',
       round: round + 1,
@@ -339,11 +378,14 @@ export const FootballBingoMobileView: React.FC = () => {
         backgroundSize: '24px 24px',
       }}
     >
-      {/* TopBar */}
-      <FootballBingoTopBar
+      {/* Standardized GameTopBar */}
+      <GameTopBar
         roomCode={roomCode}
-        phase={phase}
-        onEndRoom={() => {
+        isHost={false}
+        gameTitle="بينقو الكروي"
+        currentRound={phase !== 'LOBBY' ? round : undefined}
+        totalRounds={phase !== 'LOBBY' ? maxRounds : undefined}
+        onExit={() => {
           sessionStorage.removeItem('bingo_player_id');
           sessionStorage.removeItem('bingo_room');
           if (channelRef.current) {
@@ -368,18 +410,11 @@ export const FootballBingoMobileView: React.FC = () => {
                 {playerName}
               </h2>
 
-              {/* Ready Button */}
-              <button
-                type="button"
-                onClick={handleToggleReady}
-                className={`w-full py-3.5 rounded-xl font-black text-base border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] transition-all cursor-pointer ${
-                  isReady
-                    ? 'bg-[#8A9A5B] text-white hover:bg-[#2C2A29]'
-                    : 'bg-[#C68B59] text-white hover:bg-[#2C2A29]'
-                }`}
-              >
-                {isReady ? 'أنت جاهز ✓ (اضغط للإلغاء)' : 'جاهز للعب'}
-              </button>
+              {/* Standardized Mobile Ready Button */}
+              <MobileReadyButton
+                isReady={isReady}
+                onToggle={handleToggleReady}
+              />
             </div>
 
             {/* Quick Mobile Tip */}

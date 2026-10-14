@@ -5,6 +5,8 @@ import { Play, Users, Trophy, Sparkles, RotateCcw, X, ShieldAlert } from 'lucide
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { FootballBingoTopBar } from './components/FootballBingoTopBar';
+import { GameTopBar } from '../../../components/layout/GameTopBar';
+import { UnifiedTVLobby } from '../../../components/layout/UnifiedTVLobby';
 import { BingoTile } from './components/BingoTile';
 import {
   FootballBingoPhase,
@@ -58,6 +60,29 @@ export const FootballBingoTVView: React.FC = () => {
 
   // Realtime channel
   const channelRef = useRef<RealtimeChannel | null>(null);
+
+  // Victory audio ref (strictly non-looping, stopped on unmount)
+  const victoryAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const playVictoryAudio = useCallback(() => {
+    try {
+      if (!victoryAudioRef.current) {
+        victoryAudioRef.current = new Audio('/sounds/victory.mp3');
+        victoryAudioRef.current.loop = false;
+      }
+      victoryAudioRef.current.currentTime = 0;
+      victoryAudioRef.current.play().catch(() => {});
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (victoryAudioRef.current) {
+        victoryAudioRef.current.pause();
+        victoryAudioRef.current = null;
+      }
+    };
+  }, []);
 
   // Pick next unused footballer randomly
   const pickNextFootballer = useCallback((): ActiveFootballer => {
@@ -138,6 +163,13 @@ export const FootballBingoTVView: React.FC = () => {
     // Reset claimed counts for all players
     setPlayers(prev => prev.map(p => ({ ...p, claimedCount: 0 })));
 
+    broadcastEvent({
+      action: 'NEXT_ROUND_TRIGGER',
+      phase: 'GAMEPLAY',
+      round: nextR,
+      maxRounds,
+      player: nextFootballer,
+    });
     broadcastEvent({
       action: 'NEXT_ROUND',
       phase: 'GAMEPLAY',
@@ -284,10 +316,10 @@ export const FootballBingoTVView: React.FC = () => {
         // BINGO CLAIM from mobile!
         if (payload.action === 'BINGO_CLAIM') {
           sound.playWhistle();
-          setTimeout(() => sound.playVictory(), 200);
+          setTimeout(() => playVictoryAudio(), 200);
 
           const winnerId = payload.winnerId || payload.winner?.id || '';
-          const winnerName = payload.winnerName || payload.winner?.name || 'لاعب';
+          const winnerName = payload.winnerName || payload.winner?.name || 'متسابق';
           const r = payload.round || roundRef.current;
           const board = payload.board;
           const winningIndices = payload.winningIndices || [];
@@ -325,7 +357,10 @@ export const FootballBingoTVView: React.FC = () => {
         }
 
         // Mobile requested next round
-        if (payload.action === 'NEXT_ROUND' && phaseRef.current === 'ROUND_WIN') {
+        if (
+          (payload.action === 'NEXT_ROUND' || payload.action === 'NEXT_ROUND_TRIGGER') &&
+          phaseRef.current === 'ROUND_WIN'
+        ) {
           handleNextRound();
         }
       })
@@ -371,12 +406,15 @@ export const FootballBingoTVView: React.FC = () => {
         backgroundSize: '24px 24px',
       }}
     >
-      {/* Top Bar */}
-      <FootballBingoTopBar
+      {/* Standardized GameTopBar */}
+      <GameTopBar
         roomCode={roomCode}
-        phase={phase}
+        isHost={true}
+        gameTitle="بينقو الكروي"
+        currentRound={phase !== 'LOBBY' ? round : undefined}
+        totalRounds={phase !== 'LOBBY' ? maxRounds : undefined}
+        onTerminate={handleTerminateRoom}
         onExit={handleResetToLobby}
-        onEndRoom={handleTerminateRoom}
       />
 
       {/* Main Content Arena */}
@@ -385,97 +423,20 @@ export const FootballBingoTVView: React.FC = () => {
         {/* 1. LOBBY PHASE                                                 */}
         {/* ============================================================== */}
         {phase === 'LOBBY' && (
-          <div className="w-full max-w-5xl flex flex-col lg:flex-row items-stretch justify-center gap-6 my-auto">
-            {/* Right Card: QR Code & Code */}
-            <div className="flex-1 bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] rounded-2xl p-6 flex flex-col items-center justify-center text-center">
-              <span className="text-xs font-bold text-[#8A9A5B] uppercase tracking-wider mb-2">
-                انضم الآن بالجوال
-              </span>
-
-              <div className="p-3 bg-white border-2 border-[#2C2A29] rounded-xl shadow-[3px_3px_0px_#2C2A29] mb-4">
-                <QRCodeSVG value={joinUrl} size={140} level="M" />
-              </div>
-
-              <div className="text-xs text-[#5C4033] mb-2 font-bold">
-                أو اكتب كود الغرفة:
-              </div>
-
-              <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] px-6 py-2 rounded-xl font-mono text-2xl md:text-3xl font-black text-[#2C2A29] tracking-widest mb-4">
-                {roomCode}
-              </div>
-
-              {/* Ready / Start Action */}
-              {lobbyCountdown !== null ? (
-                <div className="w-full bg-[#8A9A5B] text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] py-3 rounded-xl font-black text-xl text-center">
-                  الانطلاق خلال {lobbyCountdown}...
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleStartGame}
-                  disabled={players.length === 0}
-                  className="w-full bg-[#8A9A5B] text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] py-3 rounded-xl font-black text-lg hover:bg-[#2C2A29] active:translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  ابدأ اللعبة ({players.length} لاعبين)
-                </button>
-              )}
-            </div>
-
-            {/* Left Card: Rules & Joined Players */}
-            <div className="flex-1 flex flex-col gap-4">
-              {/* Rules Guide Card */}
-              <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] rounded-2xl p-5">
-                <h3 className="text-lg font-black text-[#2C2A29] mb-3 border-b-2 border-[#2C2A29]/10 pb-2">
-                  طريقة لعب بينقو الكروي
-                </h3>
-                <ol className="space-y-2 text-xs md:text-sm font-bold text-[#5C4033] leading-relaxed list-decimal list-inside">
-                  <li>كل لاعب يستلم لوحة 16 مربع بصري خاصة فيه بالجوال.</li>
-                  <li>التلفزيون يكشف لاعب عشوائي كل 5 ثوانٍ مع عداد خاطف.</li>
-                  <li>طابق اللاعب مع المربع الصح (نادي، علم، مدرب، كأس، رقم، مركز).</li>
-                  <li>لك ضغطة وحدة فقط لكل لاعب.. إذا أخطأت يتقفل دورك للّاعب التالي!</li>
-                  <li>أول من يقفل خط (أفقي، عمودي، قطري) أو الـ 4 زوايا يكبس [بينقو!].</li>
-                </ol>
-              </div>
-
-              {/* Connected Players List */}
-              <div className="flex-1 bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[5px_5px_0px_#2C2A29] rounded-2xl p-4 flex flex-col">
-                <div className="flex items-center justify-between mb-3 border-b-2 border-[#2C2A29]/10 pb-2">
-                  <span className="text-sm font-black text-[#2C2A29] flex items-center gap-2">
-                    <Users size={16} /> اللاعبون في الغرفة ({players.length})
-                  </span>
-                  <span className="text-xs font-bold text-[#8A8580]">
-                    بانتظار الجميع...
-                  </span>
-                </div>
-
-                <div className="flex-1 overflow-y-auto max-h-48 flex flex-wrap gap-2 content-start">
-                  {players.length === 0 ? (
-                    <div className="w-full h-24 flex items-center justify-center text-xs text-[#8A8580] font-bold">
-                      امسح الباركود للانضمام إلى اللعبة
-                    </div>
-                  ) : (
-                    players.map(p => (
-                      <div
-                        key={p.id}
-                        className="bg-[#E5E0D5] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-3 py-1.5 rounded-xl flex items-center gap-2 text-xs md:text-sm font-black"
-                      >
-                        <span className={`w-2.5 h-2.5 rounded-full ${p.isReady ? 'bg-[#8A9A5B]' : 'bg-[#C68B59]'}`} />
-                        <span>{p.name}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleKickPlayer(p.id)}
-                          className="hover:text-red-700 transition-colors p-0.5"
-                          title="طرد اللاعب"
-                        >
-                          <X size={13} />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+          <UnifiedTVLobby
+            roomCode={roomCode}
+            gameTitle="بينقو الكروي"
+            subtitle="طابق اللاعب مع المربع الصحيح واصرخ بينقو!"
+            instructions={[
+              'كل متسابق يستلم لوحة 16 مربع بصري خاصة فيه بجواله.',
+              'التلفزيون يكشف لاعباً عشوائياً كل 5 ثوانٍ، طابقه مع المربع المناسب.',
+              'أول من يقفل خطاً مستقيماً (أفقي، عمودي، قطري) يضغط [بينقو!] ليتوّج بطلاً!',
+            ]}
+            players={players}
+            onStartGame={handleStartGame}
+            onKickPlayer={handleKickPlayer}
+            minPlayers={1}
+          />
         )}
 
         {/* ============================================================== */}

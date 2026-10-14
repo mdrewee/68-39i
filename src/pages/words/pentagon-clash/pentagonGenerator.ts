@@ -1,4 +1,5 @@
 import { arabicDict, normalizeArabic, isValidArabicWord } from '../../../utils/arabicDictionary';
+import { isNotArchaic } from '../../../utils/commonArabicWords';
 
 export interface PentagonSeed {
   id: string;
@@ -82,7 +83,7 @@ export function generateDynamicPentagonRound(
     ];
 
     const formable = arabicDict.getWordsForLetters(shuffled, 3, 6)
-      .filter(w => normalizeArabic(w).includes(normalizeArabic(center)));
+      .filter(w => normalizeArabic(w).includes(normalizeArabic(center)) && isNotArchaic(w));
 
     if (formable.length >= 15) {
       previousLetterSets.add(setKey);
@@ -133,7 +134,7 @@ export function isPentagonWordValid(
     return true;
   }
 
-  return isValidArabicWord(clean);
+  return isValidArabicWord(clean) && isNotArchaic(clean);
 }
 
 export function calculatePentagonWordScore(word: string, allLetters: string[]): number {

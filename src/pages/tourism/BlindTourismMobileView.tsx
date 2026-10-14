@@ -1,4 +1,4 @@
-import { MobileTopBar } from '../../components/common/MobileTopBar';
+import { GameTopBar } from '../../components/layout/GameTopBar';
 import { CopyCodeButton } from '../../components/common/CopyCodeButton';
 import { GeoTopNavControls } from '../../components/common/GeoTopNavControls';
 import { ShareRoomButton } from '../../components/common/ShareRoomButton';
@@ -405,10 +405,22 @@ export const BlindTourismMobileView: React.FC<BlindTourismMobileViewProps> = ({
   const currentStage = tourismState?.currentStage || 1;
   const currentPointsIfLocked = STAGE_POINTS_MAP[currentStage] || 1;
 
+  // Consensus Skip Hint calculations
+  const skipVotes = tourismState?.skipHintVotes || {};
+  const hasVotedSkip = Boolean(skipVotes[playerId]);
+  const activePlayers = room?.players?.filter((p) => p.isOnline !== false && !p.isBot) || [];
+  const votesCount = Object.keys(skipVotes).filter((k) => skipVotes[k]).length;
+  const requiredVotes = Math.max(1, Math.ceil((activePlayers.length || 1) / 2));
+
+  const handleVoteSkipHint = () => {
+    sound.playClick();
+    roomBus.voteSkipTourismHint(roomId, playerId);
+  };
+
   if (!isJoined) {
     return (
       <div className="w-full max-w-lg mx-auto h-[100dvh] overflow-hidden bg-[#E5E0D5] bg-[radial-gradient(#C8C1B2_0.75px,transparent_0.75px)] [background-size:24px_24px] text-[#2C2A29] flex flex-col justify-between p-4 select-none" dir="rtl">
-        <MobileTopBar roomCode={roomCode} onExit={handleExitGame} />
+        <GameTopBar roomCode={roomCode} isHost={false} onExit={handleExitGame} />
 
         <main className="my-auto max-w-sm mx-auto w-full">
           <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-6 shadow-[4px_4px_0px_#2C2A29] text-center flex flex-col gap-4">
@@ -458,7 +470,14 @@ export const BlindTourismMobileView: React.FC<BlindTourismMobileViewProps> = ({
   return (
     <div dir="rtl" className="w-full max-w-lg mx-auto h-[100dvh] flex flex-col justify-between p-3.5 pb-36 overflow-y-auto bg-[#E5E0D5] bg-[radial-gradient(#C8C1B2_0.75px,transparent_0.75px)] [background-size:24px_24px] text-[#2C2A29] font-sans select-none"
     >
-      <MobileTopBar roomCode={room?.code || roomId} onExit={handleExitGame} points={tourismPlayer?.score || 0} title={isLobby ? 'لوبي الانتظار' : isPlaying ? `الجولة ${tourismState?.currentRound || 1} من ${tourismState?.totalRounds || 5}` : undefined} />
+      <GameTopBar
+        roomCode={room?.code || roomId}
+        isHost={false}
+        currentRound={tourismState?.currentRound || 1}
+        totalRounds={tourismState?.totalRounds || 5}
+        gameTitle="سياحة عمياء"
+        onExit={handleExitGame}
+      />
 
       {/* Main Container */}
       <main className="flex-1 flex flex-col p-4 max-w-md w-full mx-auto gap-4">
@@ -536,6 +555,26 @@ export const BlindTourismMobileView: React.FC<BlindTourismMobileViewProps> = ({
                     "{currentItem.hints[currentStage - 1]}"
                   </p>
                 </div>
+              )}
+
+              {/* Consensus Skip Hint Button */}
+              {currentStage < 5 && (
+                <button
+                  type="button"
+                  onClick={handleVoteSkipHint}
+                  disabled={hasVotedSkip}
+                  className={`w-full mt-3 py-2.5 px-3 rounded-xl border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                    hasVotedSkip
+                      ? 'bg-[#8A9A5B] text-white opacity-90 cursor-default'
+                      : 'bg-[#C68B59] hover:bg-[#2C2A29] text-white active:translate-y-0.5 cursor-pointer'
+                  }`}
+                >
+                  <span>
+                    {hasVotedSkip
+                      ? `✓ تم طلب تخطي التلميح (${votesCount}/${requiredVotes})`
+                      : `تخطي التلميح (${votesCount}/${requiredVotes})`}
+                  </span>
+                </button>
               )}
             </div>
 

@@ -85,6 +85,8 @@ export const ScattergoriesTVView: React.FC = () => {
   const [submissions, setSubmissions] = useState<Record<string, PlayerRoundSubmission>>({});
   const submissionsRef = useRef<Record<string, PlayerRoundSubmission>>({});
   submissionsRef.current = submissions;
+  const phaseRef = useRef<ScattergoriesPhase>(phase);
+  phaseRef.current = phase;
 
   // Cumulative scores: playerId -> number
   const [cumulativeScores, setCumulativeScores] = useState<Record<string, number>>({});
@@ -282,7 +284,16 @@ export const ScattergoriesTVView: React.FC = () => {
   // Handle Time Up
   const handleTimeUp = () => {
     sound.playBuzzerHit();
-    evaluateRoundSubmissions();
+    const ch = (roomBus as any).getChannel?.(roomId);
+    if (ch) {
+      try {
+        ch.send({ type: 'broadcast', event: 'ROUND_TIME_UP', payload: {} });
+      } catch {}
+    }
+    roomBus.emit('ROUND_TIME_UP', roomId, {});
+    setTimeout(() => {
+      evaluateRoundSubmissions();
+    }, 400);
   };
 
   // Listen to ADMIN_REQUEST_SUBMITTED, SCATTERGORIES_SUBMIT, ROUND_STOPPED_BY_PLAYER, SCATTERGORIES_ADMIN_VETO, ADMIN_ADVANCE_NEXT_ROUND
@@ -304,10 +315,19 @@ export const ScattergoriesTVView: React.FC = () => {
       if (!payload || !payload.playerId) return;
 
       sound.playClick();
-      setSubmissions(prev => ({
-        ...prev,
+      submissionsRef.current = {
+        ...submissionsRef.current,
         [payload.playerId]: payload
-      }));
+      };
+      setSubmissions(submissionsRef.current);
+      try {
+        sessionStorage.setItem(`scattergories_subs_${roomId}_round_${currentRound}`, JSON.stringify(submissionsRef.current));
+      } catch {}
+
+      // If already in evaluation phase, re-evaluate immediately so answers appear in review
+      if (phaseRef.current === 'EVALUATION') {
+        evaluateRoundSubmissions();
+      }
     });
 
     // 3. Instant Round Stop when ANY player clicks "خلصت"
@@ -368,11 +388,21 @@ export const ScattergoriesTVView: React.FC = () => {
       unsubVeto();
       unsubAdvance();
     };
-  }, [phase, designatedAdminId, roomId, selectedCategories, targetLetter]);
+  }, [phase, designatedAdminId, roomId, selectedCategories, targetLetter, currentRound]);
 
   // Evaluate Round Submissions
   const evaluateRoundSubmissions = () => {
-    const rawSubs = submissionsRef.current;
+    let rawSubs = submissionsRef.current;
+    if (Object.keys(rawSubs).length === 0) {
+      try {
+        const stored = sessionStorage.getItem(`scattergories_subs_${roomId}_round_${currentRound}`);
+        if (stored) {
+          rawSubs = JSON.parse(stored);
+          submissionsRef.current = rawSubs;
+          setSubmissions(rawSubs);
+        }
+      } catch {}
+    }
     const evals: EvaluatedAnswer[] = [];
 
     selectedCategories.forEach(cat => {
@@ -516,7 +546,7 @@ export const ScattergoriesTVView: React.FC = () => {
   // Next round
   const handleNextRound = () => {
     sound.playClick();
-    if (currentRound >= 3) {
+    if (currentRound >= 5) {
       setPhase('GAME_OVER');
     } else {
       setCurrentRound(prev => prev + 1);
@@ -712,13 +742,13 @@ export const ScattergoriesTVView: React.FC = () => {
           </div>
 
           {/* Big Jumbo Roulette Box */}
-          <div className="w-48 h-48 md:w-64 md:h-64 bg-[#F7F4EC] border-4 border-[#2C2A29] shadow-[10px_10px_0px_#2C2A29] rounded-3xl flex items-center justify-center mx-auto animate-bounce duration-150">
+          <div className="w-48 h-48 md:w-64 md:h-64 bg-[#F7F4EC] border-4 border-[#2C2A29] shadow-[10px_10px_0px_#2C2A29] rounded-3xl flex items-center justify-center mx-auto">
             <span className="text-8xl md:text-9xl font-black text-[#2C2A29]">
               {rouletteLetter}
             </span>
           </div>
 
-          <p className="text-sm md:text-base font-black text-[#5C4033] animate-pulse">
+          <p className="text-sm md:text-base font-black text-[#5C4033]">
             جاري اختيار الحرف الأبجدي العشوائي للجولة...
           </p>
         </div>
@@ -745,7 +775,7 @@ export const ScattergoriesTVView: React.FC = () => {
           <div className="flex items-center gap-4">
             {/* 60s Countdown Timer */}
             <div className={`flex items-center gap-2 px-5 py-2.5 border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl font-black text-xl ${
-              timeLeft <= 10 ? 'bg-red-500 text-white animate-pulse' : 'bg-[#F7F4EC] text-[#2C2A29]'
+              timeLeft <= 10 ? 'bg-red-500 text-white' : 'bg-[#F7F4EC] text-[#2C2A29]'
             }`}>
               <Clock className="w-6 h-6" />
               <span>{timeLeft} ثانية</span>
@@ -784,7 +814,7 @@ export const ScattergoriesTVView: React.FC = () => {
             </div>
 
             {firstFinisherName && (
-              <div className="bg-red-500 text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl p-3 text-center text-sm font-black animate-pulse">
+              <div className="bg-red-500 text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl p-3 text-center text-sm font-black">
                 أنهى اللاعب "{firstFinisherName}" أولاً! جاري إيقاف الجولة وتحكيم الإجابات...
               </div>
             )}

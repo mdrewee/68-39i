@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Check, AlertTriangle, ShieldCheck, Clock, Play, UserCheck, X } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { MobileTopBar } from '../../../components/MobileTopBar';
+import { GameTopBar } from '../../../components/layout/GameTopBar';
 import { CleanTeamSelection } from '../../../components/eshrah/CleanTeamSelection';
 import {
   EshrahPlayer,
@@ -177,13 +177,15 @@ export const MoveThePuppetMobileView: React.FC = () => {
         }}
       />
 
-      {/* TopBar */}
-      <div className="relative z-20">
-        <MobileTopBar
-          roomCode={roomCode}
-          onExit={() => navigate('/')}
-        />
-      </div>
+      {/* Standardized GameTopBar */}
+      <GameTopBar
+        roomCode={roomCode}
+        isHost={false}
+        gameTitle="حرّك الدمية"
+        currentRound={phase !== 'TEAMS' ? currentRound : undefined}
+        totalRounds={phase !== 'TEAMS' ? 5 : undefined}
+        onExit={() => navigate('/')}
+      />
 
       <main className="flex-1 flex flex-col p-4 relative z-10 max-w-lg mx-auto w-full">
         {/* ================= 1. TEAMS (LOBBY SELECTION ON MOBILE) ================= */}
@@ -225,26 +227,23 @@ export const MoveThePuppetMobileView: React.FC = () => {
               <div className="flex-1 flex flex-col justify-between gap-4 my-auto">
                 <div className="bg-[#8A9A5B]/15 border-2 border-[#8A9A5B] rounded-2xl p-3 text-center">
                   <span className="text-xs font-black text-[#8A9A5B]">
-                    ⚠️ الدمية تقف في الصالة بدون جوال! اقرأ الحركة واضغط [جاهز] لبدء الـ 60 ثانية.
+                    اقرأ المشهد واضغط [جاهز] لبدء الـ 60 ثانية.
                   </span>
                 </div>
 
                 {/* Secret Action Card */}
-                <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] flex flex-col items-center text-center gap-3">
-                  <span className="text-xs font-bold text-[#5C4033]">المشهد المطلوب تجسيده بتحريك أطراف الدمية:</span>
+                <div className="bg-[#F7F4EC] border-2 sm:border-3 border-[#2C2A29] rounded-2xl p-6 shadow-[3px_3px_0px_#2C2A29] flex flex-col items-center text-center gap-2">
+                  <span className="text-xs font-bold text-[#5C4033]">المشهد المطلوب:</span>
                   <div className="text-3xl md:text-4xl font-black text-[#2C2A29] tracking-wide my-3 leading-snug">
                     {currentAction?.action || '...'}
-                  </div>
-                  <div className="bg-[#E5E0D5]/70 border border-[#2C2A29]/20 rounded-2xl p-3 text-xs font-bold text-[#5C4033] w-full text-right space-y-1">
-                    <p>• أمسك ذراعي وساقي الدمية وضعها في الوضعية المناسبة صامتاً.</p>
-                    <p>• ممنوع الكلام أو إصدار أي أصوات إطلاقاً!</p>
                   </div>
                 </div>
 
                 {/* Ready Button */}
                 <button
+                  type="button"
                   onClick={handleStartTimer}
-                  className="w-full bg-[#8A9A5B] hover:bg-[#78884d] active:scale-98 text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl py-4 flex items-center justify-center gap-2 font-black text-lg transition-all cursor-pointer"
+                  className="w-full bg-[#8A9A5B] hover:opacity-95 text-white font-black text-xl py-4 rounded-xl border-2 sm:border-3 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-2"
                 >
                   <Play className="w-6 h-6 fill-white" />
                   <span>جاهز - ابدأ الوقت (60 ثانية)</span>
@@ -253,13 +252,13 @@ export const MoveThePuppetMobileView: React.FC = () => {
             ) : (
               /* OPPONENT REFEREE PREP VIEW */
               <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 my-auto">
-                <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[4px_4px_0px_#2C2A29] w-full flex flex-col items-center gap-3">
+                <div className="bg-[#F7F4EC] border-2 sm:border-3 border-[#2C2A29] rounded-2xl p-6 shadow-[3px_3px_0px_#2C2A29] w-full flex flex-col items-center gap-3">
                   <UserCheck className="w-12 h-12 text-[#C68B59]" />
                   <h3 className="text-xl font-black text-[#2C2A29]">
                     الفريق المنافس يستعد لتوجيه الدمية!
                   </h3>
                   <p className="text-xs font-bold text-[#5C4033] leading-relaxed">
-                    أنتم الحكام! تأكدوا أن الدمية تقف بدون جوال ولا تتحرك إلا بتوجيه أطرافها صامتاً.
+                    راقبوا التنفيذ بصمت واستعدوا لإمكانية سرقة النقطة.
                   </p>
                 </div>
               </div>
@@ -286,54 +285,55 @@ export const MoveThePuppetMobileView: React.FC = () => {
             {/* DIRECTING TEAM VIEW */}
             {isMyTeamActive ? (
               <div className="flex-1 flex flex-col justify-between gap-4 my-auto">
-                <div className="bg-[#8A9A5B]/15 border-2 border-[#8A9A5B] rounded-2xl p-3 text-center">
-                  <span className="text-xs font-black text-[#8A9A5B]">
-                    ⚠️ وجّه أطراف الدمية صامتاً! المنافس يحتسب الإجابة الصحيحة.
-                  </span>
-                </div>
-
-                <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] flex flex-col items-center text-center">
-                  <span className="text-xs font-bold text-[#5C4033] mb-1">المشهد المطلوب توجيهه:</span>
+                <div className="bg-[#F7F4EC] border-2 sm:border-3 border-[#2C2A29] rounded-2xl p-6 shadow-[3px_3px_0px_#2C2A29] flex flex-col items-center text-center">
+                  <span className="text-xs font-bold text-[#5C4033] mb-1">المشهد المطلوب:</span>
                   <div className="text-3xl md:text-4xl font-black text-[#2C2A29] tracking-wide my-4 leading-snug">
                     {currentAction?.action || '...'}
                   </div>
-                  <div className="bg-[#E5E0D5]/70 border border-[#2C2A29]/20 rounded-2xl p-3 text-xs font-bold text-[#5C4033] w-full text-right mt-2 space-y-1">
-                    <p>• حرك أطراف الدمية في الوضعية المناسبة بدون أي كلام.</p>
-                    <p>• أعضاء فريقك يخمنون بصوت عالٍ في الصالة!</p>
-                  </div>
                 </div>
 
-                <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-4 text-center text-xs font-bold text-[#5C4033] shadow-[2px_2px_0px_#2C2A29]">
-                  الفريق المنافس يراقب ويضغط [إجابة صحيحة] فور تخمينكم لها
+                {/* Team Refereeing Controls (جابها / ما جابها) */}
+                <div className="grid grid-cols-2 gap-3 w-full">
+                  <button
+                    type="button"
+                    onClick={handleRefereeCorrect}
+                    className="bg-[#8A9A5B] hover:opacity-95 text-white font-black text-xl py-4 rounded-xl border-2 sm:border-3 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <Check className="w-6 h-6 stroke-[3]" />
+                    <span>جابها</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sound.playClick();
+                      if (channelRef.current) {
+                        channelRef.current.send({
+                          type: 'broadcast',
+                          event: 'REFEREE_ACTION',
+                          payload: { action: 'DID_NOT_GET' }
+                        });
+                      }
+                    }}
+                    className="bg-[#C68B59] hover:opacity-95 text-white font-black text-xl py-4 rounded-xl border-2 sm:border-3 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <X className="w-6 h-6 stroke-[3]" />
+                    <span>ما جابها</span>
+                  </button>
                 </div>
               </div>
             ) : (
-              /* OPPONENT REFEREE VIEW */
+              /* OPPONENT WAITING VIEW */
               <div className="flex-1 flex flex-col justify-between gap-4 my-auto">
-                <div className="bg-[#C68B59]/15 border-2 border-[#C68B59] rounded-2xl p-3 text-center">
-                  <span className="text-xs font-black text-[#C68B59]">
-                    ⚖️ أنت الحَكَم! راقب تنفيذ المنافس واحتسب الإجابة الصحيحة
-                  </span>
-                </div>
-
-                <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[5px_5px_0px_#2C2A29] flex flex-col items-center text-center gap-3">
+                <div className="bg-[#F7F4EC] border-2 sm:border-3 border-[#2C2A29] rounded-2xl p-6 shadow-[3px_3px_0px_#2C2A29] flex flex-col items-center text-center gap-3">
                   <ShieldCheck className="w-12 h-12 text-[#C68B59]" />
                   <h3 className="text-xl font-black text-[#2C2A29]">
                     الفريق المنافس يوجّه دميته الآن!
                   </h3>
                   <p className="text-xs font-bold text-[#5C4033]">
-                    تأكد أنهم صامتون تماماً ولا يتكلمون، وأن الدمية تتحرك بتوجيه أطرافها فقط.
+                    راقبوا التنفيذ بصمت.. إذا ضغطوا [ما جابها] أو انتهى الوقت، ستنطلق فرصة السرقة فوراً!
                   </p>
                 </div>
-
-                {/* Referee Verification Controls */}
-                <button
-                  onClick={handleRefereeCorrect}
-                  className="w-full bg-[#8A9A5B] hover:bg-[#78884d] active:scale-98 text-white border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl py-4 flex items-center justify-center gap-2 font-black text-xl transition-all cursor-pointer"
-                >
-                  <Check className="w-7 h-7 stroke-[3]" />
-                  <span>إجابة صحيحة للفريق ✓ (+1 pt والتالي)</span>
-                </button>
               </div>
             )}
           </div>

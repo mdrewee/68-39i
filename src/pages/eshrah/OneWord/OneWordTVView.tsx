@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Clock, Trophy, Play, CheckCircle2, Eye, EyeOff, Sparkles, ArrowRightLeft } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { EshrahTopBar } from '../../../components/eshrah/EshrahTopBar';
+import { GameTopBar } from '../../../components/layout/GameTopBar';
 import { EshrahTVLobby } from '../../../components/eshrah/EshrahTVLobby';
 import { EshrahPodium } from '../../../components/eshrah/EshrahPodium';
 import {
@@ -13,12 +13,9 @@ import {
   EshrahPromptItem,
   EshrahGamePhase
 } from '../../../types/eshrah';
-import { getRandomPrompt } from '../../../data/eshrahWordsBank';
+import { ONE_WORD_CATEGORIES, ONE_WORD_BANK, OneWordCategory } from '../../../data/oneWordBank';
+import { pickNextUnusedItem } from '../../../utils/sessionQuestionManager';
 import { sound } from '../../../lib/audio';
-
-const ALL_CATEGORIES: EshrahCategory[] = [
-  'football', 'tv_series', 'movies', 'proverbs', 'theater', 'tools', 'food', 'countries'
-];
 
 export const OneWordTVView: React.FC = () => {
   const { code: rawCode } = useParams<{ code: string }>();
@@ -27,6 +24,7 @@ export const OneWordTVView: React.FC = () => {
 
   // State
   const [phase, setPhase] = useState<EshrahGamePhase>('TEAMS');
+  const [selectedCategory, setSelectedCategory] = useState<OneWordCategory>('كرة قدم');
   const [players, setPlayers] = useState<EshrahPlayer[]>([]);
   const [currentRound, setCurrentRound] = useState<number>(1); // strictly 1 to 5
   const [team1Score, setTeam1Score] = useState<number>(0);
@@ -218,7 +216,13 @@ export const OneWordTVView: React.FC = () => {
     }
 
     // Instant jump to next round (PREP_WORD)
-    const nextPrompt = getRandomPrompt(ALL_CATEGORIES, usedPromptIds);
+    const rawNextWord = pickNextUnusedItem(roomCode, selectedCategory, ONE_WORD_BANK[selectedCategory]) || ONE_WORD_BANK[selectedCategory][0];
+    const nextPrompt: EshrahPromptItem = {
+      id: `ow_${Date.now()}_${rawNextWord}`,
+      word: rawNextWord,
+      category: selectedCategory as any,
+      bannedWords: [],
+    };
     setUsedPromptIds((prev) => new Set([...prev, nextPrompt.id]));
     setCurrentPrompt(nextPrompt);
     currentPromptRef.current = nextPrompt;
@@ -243,7 +247,13 @@ export const OneWordTVView: React.FC = () => {
 
   // Launch Match from Lobby
   const handleLaunchMatch = () => {
-    const firstPrompt = getRandomPrompt(ALL_CATEGORIES, usedPromptIds);
+    const rawFirstWord = pickNextUnusedItem(roomCode, selectedCategory, ONE_WORD_BANK[selectedCategory]) || ONE_WORD_BANK[selectedCategory][0];
+    const firstPrompt: EshrahPromptItem = {
+      id: `ow_${Date.now()}_${rawFirstWord}`,
+      word: rawFirstWord,
+      category: selectedCategory as any,
+      bannedWords: [],
+    };
     setUsedPromptIds(new Set([firstPrompt.id]));
     setCurrentPrompt(firstPrompt);
     currentPromptRef.current = firstPrompt;
@@ -293,25 +303,57 @@ export const OneWordTVView: React.FC = () => {
         }}
       />
 
-      {/* TopBar */}
-      <div className="relative z-20">
-        <EshrahTopBar
-          roomCode={roomCode}
-          gameTitle="كلمة واحدة"
-          phase={phase}
-          onTerminate={handleEndRoom}
-          onExit={handleEndRoom}
-        />
-      </div>
+      {/* Standardized GameTopBar */}
+      <GameTopBar
+        roomCode={roomCode}
+        isHost={true}
+        gameTitle="كلمة واحدة"
+        currentRound={phase !== 'TEAMS' ? currentRound : undefined}
+        totalRounds={phase !== 'TEAMS' ? 5 : undefined}
+        onTerminate={handleEndRoom}
+        onExit={handleEndRoom}
+      />
 
       <main className="flex-1 flex flex-col items-center justify-between p-4 md:p-6 relative z-10 max-w-6xl mx-auto w-full">
         {/* ================= 1. TEAMS (LOBBY) ================= */}
         {phase === 'TEAMS' && (
-          <div className="w-full flex-1 flex flex-col items-center justify-center my-auto">
+          <div className="w-full flex-1 flex flex-col items-center justify-center my-auto gap-4">
+            {/* Host Category Picker for the Match */}
+            <div className="w-full max-w-4xl bg-[#F7F4EC] border-2 sm:border-3 border-[#2C2A29] rounded-2xl p-4 sm:p-5 shadow-[3px_3px_0px_#2C2A29] text-center">
+              <div className="flex items-center justify-between border-b-2 border-[#2C2A29]/15 pb-2 mb-3">
+                <span className="text-xs font-black bg-[#8A9A5B] text-white border border-[#2C2A29] px-3 py-1 rounded-lg shadow-[2px_2px_0px_#2C2A29]">
+                  اختيار فئة المباراة
+                </span>
+                <span className="text-xs font-bold text-[#5C4033]">
+                  الفئة المختارة: <strong className="text-[#2C2A29]">{selectedCategory}</strong>
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                {ONE_WORD_CATEGORIES.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => {
+                      sound.playClick();
+                      setSelectedCategory(cat);
+                    }}
+                    className={`py-2.5 px-2 rounded-xl font-black text-xs sm:text-sm border-2 border-[#2C2A29] transition-all cursor-pointer ${
+                      selectedCategory === cat
+                        ? 'bg-[#8A9A5B] text-white shadow-[2px_2px_0px_#2C2A29]'
+                        : 'bg-[#FAF8F5] text-[#2C2A29] hover:bg-[#E5E0D5]'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <EshrahTVLobby
               roomCode={roomCode}
               gameTitle="كلمة واحدة"
-              gameRuleSnippet="مواجهة وجه لوجه بنفس الكلمة! يقف ممثل من كل فريق أمام الشاشة ويريان الكلمة السرية في جوالهما، ويتناوبان في إعطاء تلميح من كلمة واحدة فقط لكل دور (10 ثوانٍ للدور). أول فريق يصرخ بالإجابة يضغط [جابوها] ويكسب النقطة!"
+              gameRuleSnippet={`مواجهة وجه لوجه في فئة (${selectedCategory})! يقف ممثل من كل فريق أمام الشاشة ويتناوبان في إعطاء تلميح من كلمة واحدة فقط لكل دور (10 ثوانٍ للدور). أول فريق يصرخ بالإجابة يضغط [جابوها] ويكسب النقطة!`}
               players={players}
               onStartMatch={handleLaunchMatch}
             />
@@ -322,12 +364,12 @@ export const OneWordTVView: React.FC = () => {
         {phase === 'PREP_WORD' && (
           <div className="w-full flex-1 flex flex-col items-center justify-center gap-6 my-auto text-center max-w-xl">
             <span className="text-xs font-black text-[#5C4033] bg-[#F7F4EC] border-2 border-[#2C2A29] px-4 py-1.5 rounded-xl shadow-[2px_2px_0px_#2C2A29]">
-              جولة المواجهة {currentRound} من 5
+              جولة المواجهة {currentRound} من 5 ({selectedCategory})
             </span>
 
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-8 shadow-[6px_6px_0px_#2C2A29] w-full flex flex-col items-center gap-5">
               <div className="w-16 h-16 rounded-2xl bg-[#8A9A5B]/15 border-2 border-[#8A9A5B] flex items-center justify-center text-[#8A9A5B]">
-                <Clock className="w-8 h-8 animate-pulse" />
+                <Clock className="w-8 h-8" />
               </div>
 
               <h3 className="text-2xl md:text-3xl font-black text-[#2C2A29]">

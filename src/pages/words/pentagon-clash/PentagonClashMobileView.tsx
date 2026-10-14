@@ -14,8 +14,8 @@ import {
   Hexagon
 } from 'lucide-react';
 import { roomBus, cleanRoomCode } from '../../../lib/roomBus';
-import { sound } from '../../../lib/audio';
 import { arabicDict, normalizeArabic } from '../../../utils/arabicDictionary';
+import { isNotArchaic } from '../../../utils/commonArabicWords';
 
 interface PentagonMobileProps {
   channel: RealtimeChannel | null;
@@ -177,11 +177,11 @@ export const PentagonClashMobileView: React.FC<PentagonMobileProps> = ({
       return;
     }
 
-    // Strict Dictionary Validation: Reject Gibberish
-    if (!arabicDict.isValid(clean)) {
+    // Strict Dictionary Validation: Reject Gibberish & Archaic Words
+    if (!arabicDict.isValid(clean) || !isNotArchaic(clean)) {
       sound.playTimerWarning();
       triggerShake();
-      setToastMessage({ text: 'كلمة غير صحيحة أو غير موجودة في المعجم!', type: 'error' });
+      setToastMessage({ text: 'كلمة غير صحيحة أو غير شائعة!', type: 'error' });
       return;
     }
 
@@ -240,7 +240,7 @@ export const PentagonClashMobileView: React.FC<PentagonMobileProps> = ({
       {/* Main Arena */}
       {!isRoundActive && !roundEnded ? (
         <div className="flex-1 flex flex-col items-center justify-center text-center p-6 bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl mb-3">
-          <Hexagon className="w-16 h-16 text-[#8A9A5B] mb-4 animate-pulse" />
+          <Hexagon className="w-16 h-16 text-[#8A9A5B] mb-4" />
           <h2 className="text-xl font-black text-[#000000] mb-2">استعد للجولة!</h2>
           <p className="text-xs font-bold text-[#5C4033] mb-6">
             ستظهر الحروف الخماسية على شاشتك. كوّن الكلمات بأسرع ما يمكن واخطف النقاط قبل بقية اللاعبين!
@@ -287,7 +287,8 @@ export const PentagonClashMobileView: React.FC<PentagonMobileProps> = ({
                 <button
                   key={i}
                   onClick={() => handleLetterTap(letter)}
-                  className="w-[72px] h-[72px] bg-[#F7F4EC] active:bg-[#8A9A5B] active:text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl text-2xl font-black text-[#000000] active:translate-y-0.5 transition-all select-none touch-manipulation"
+                  style={{ clipPath: 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)' }}
+                  className="w-[74px] h-[74px] bg-[#F7F4EC] active:bg-[#8A9A5B] active:text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] text-2xl font-black text-[#000000] active:translate-y-0.5 transition-all select-none touch-manipulation flex items-center justify-center cursor-pointer"
                 >
                   {letter}
                 </button>
@@ -299,7 +300,8 @@ export const PentagonClashMobileView: React.FC<PentagonMobileProps> = ({
               {outerLetters[2] && (
                 <button
                   onClick={() => handleLetterTap(outerLetters[2])}
-                  className="w-[72px] h-[72px] bg-[#F7F4EC] active:bg-[#8A9A5B] active:text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl text-2xl font-black text-[#000000] active:translate-y-0.5 transition-all select-none touch-manipulation"
+                  style={{ clipPath: 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)' }}
+                  className="w-[74px] h-[74px] bg-[#F7F4EC] active:bg-[#8A9A5B] active:text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] text-2xl font-black text-[#000000] active:translate-y-0.5 transition-all select-none touch-manipulation flex items-center justify-center cursor-pointer"
                 >
                   {outerLetters[2]}
                 </button>
@@ -308,7 +310,8 @@ export const PentagonClashMobileView: React.FC<PentagonMobileProps> = ({
               {/* Center Mandatory Letter */}
               <button
                 onClick={() => handleLetterTap(centerLetter)}
-                className="w-[84px] h-[84px] bg-[#C68B59] active:bg-[#2C2A29] text-white border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-3xl text-3xl font-black active:translate-y-0.5 transition-all select-none touch-manipulation animate-pulse"
+                style={{ clipPath: 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)' }}
+                className="w-[86px] h-[86px] bg-[#C68B59] active:bg-[#2C2A29] text-white border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] text-3xl font-black active:translate-y-0.5 transition-all select-none touch-manipulation flex items-center justify-center cursor-pointer"
               >
                 {centerLetter}
               </button>
@@ -316,7 +319,8 @@ export const PentagonClashMobileView: React.FC<PentagonMobileProps> = ({
               {outerLetters[3] && (
                 <button
                   onClick={() => handleLetterTap(outerLetters[3])}
-                  className="w-[72px] h-[72px] bg-[#F7F4EC] active:bg-[#8A9A5B] active:text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl text-2xl font-black text-[#000000] active:translate-y-0.5 transition-all select-none touch-manipulation"
+                  style={{ clipPath: 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)' }}
+                  className="w-[74px] h-[74px] bg-[#F7F4EC] active:bg-[#8A9A5B] active:text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] text-2xl font-black text-[#000000] active:translate-y-0.5 transition-all select-none touch-manipulation flex items-center justify-center cursor-pointer"
                 >
                   {outerLetters[3]}
                 </button>
@@ -328,7 +332,8 @@ export const PentagonClashMobileView: React.FC<PentagonMobileProps> = ({
               {outerLetters[4] && (
                 <button
                   onClick={() => handleLetterTap(outerLetters[4])}
-                  className="w-[72px] h-[72px] bg-[#F7F4EC] active:bg-[#8A9A5B] active:text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl text-2xl font-black text-[#000000] active:translate-y-0.5 transition-all select-none touch-manipulation"
+                  style={{ clipPath: 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)' }}
+                  className="w-[74px] h-[74px] bg-[#F7F4EC] active:bg-[#8A9A5B] active:text-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] text-2xl font-black text-[#000000] active:translate-y-0.5 transition-all select-none touch-manipulation flex items-center justify-center cursor-pointer"
                 >
                   {outerLetters[4]}
                 </button>

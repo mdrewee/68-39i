@@ -3,6 +3,7 @@ import { GeoTopNavControls } from '../../components/common/GeoTopNavControls';
 import { GeographyGameLobby } from '../../components/common/GeographyGameLobby';
 import { CopyCodeButton } from '../../components/common/CopyCodeButton';
 import { LobbyRuleBox } from '../../components/common/LobbyRuleBox';
+import { GameTopBar } from '../../components/layout/GameTopBar';
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
@@ -350,50 +351,15 @@ export const BlindTourismTVView: React.FC = () => {
         }
       `}</style>
 
-      {/* Top TV Bar */}
-      <header className="h-16 bg-[#F7F4EC] border-b-2 border-[#2C2A29] px-6 flex items-center justify-between shadow-[4px_4px_0px_#2C2A29] z-40 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#C68B59] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] duration-150 ease-out hover:-translate-y-1 text-white flex items-center justify-center font-black">
-            <Compass className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-black text-[#000000] leading-tight">سياحة عمياء</h1>
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#8A9A5B]/20 text-[#8A9A5B] font-bold border border-[#8A9A5B]/30">
-                فئة الجغرافيا
-              </span>
-            </div>
-            <p className="text-xs font-bold text-[#5C4033]">
-              الجولة {tourismState?.currentRound || 1} من {tourismState?.totalRounds || 5} • التلميح {currentStage} من 5
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {isPlaying && (
-            <div
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-xl font-mono font-black text-xl border-2 transition-all shadow-[3px_3px_0px_#2C2A29] ${
-                stageSecondsRemaining <= 4
-                  ? 'bg-[#A35A5A] text-white border-[#2C2A29] animate-pulse'
-                  : 'bg-[#C68B59] text-white border-[#2C2A29]'
-              }`}
-            >
-              <Clock className="w-5 h-5" />
-              <span>{stageSecondsRemaining}s</span>
-            </div>
-          )}
-
-          {/* Strictly HIDE room code during active gameplay on TV screen */}
-          <GeoTopNavControls
-            roomCode={room?.code || roomId}
-            showRoomCode={false}
-            showFullscreen={true}
-            exitActionType="return_lobby"
-            exitLabel="العودة للوبي"
-            onReturnToLobby={handleResetToLobby}
-          />
-        </div>
-      </header>
+      <GameTopBar
+        roomCode={room?.code || roomId}
+        isHost={true}
+        currentRound={tourismState?.currentRound || 1}
+        totalRounds={tourismState?.totalRounds || 5}
+        gameTitle="سياحة عمياء"
+        onTerminate={handleResetToLobby}
+        onExit={handleResetToLobby}
+      />
 
       {/* Main Content Area */}
       <div className="flex-1 relative flex overflow-hidden">
@@ -411,6 +377,14 @@ export const BlindTourismTVView: React.FC = () => {
                 </span>
               </div>
               <div className="flex items-center gap-3 shrink-0">
+                {isPlaying && (
+                  <div className={`px-4 py-2 rounded-2xl border-2 border-[#2C2A29] shadow-[0_3px_0_#2C2A29] text-center font-mono font-black text-lg ${
+                    stageSecondsRemaining <= 4 ? 'bg-[#A35A5A] text-white' : 'bg-[#C68B59] text-white'
+                  }`}>
+                    <span className="text-[10px] block font-sans">الوقت</span>
+                    <span>{stageSecondsRemaining}s</span>
+                  </div>
+                )}
                 <div className="px-4 py-2 rounded-2xl bg-[#F3EFE6] border-2 border-[#4A463D] shadow-[0_3px_0_#4A463D] text-center">
                   <span className="text-[10px] font-black text-[#4A463D] block">المرحلة الحالية</span>
                   <span className="text-lg font-mono font-black text-[#24221E]">
@@ -661,7 +635,7 @@ export const BlindTourismTVView: React.FC = () => {
 
         {/* Floating Manual Host Override Button during REVEALING or INTERMISSION */}
         {(isRevealing || isIntermission) && (
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl px-6 py-3 shadow-[6px_6px_0px_#2C2A29] flex items-center gap-6 animate-fade-in">
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl px-6 py-3 shadow-[6px_6px_0px_#2C2A29] flex items-center gap-6">
             <div className="text-right">
               <span className="text-xs font-bold text-[#5C4033] block">
                 جاهزية المتسابقين ({nextReadyPlayerIds.size} / {playersList.length})
@@ -688,7 +662,7 @@ export const BlindTourismTVView: React.FC = () => {
 
         {/* Big Reveal Announcement Banner Overlay during REVEALING */}
         {isRevealing && currentItem && (
-          <div className="absolute top-28 left-1/2 -translate-x-1/2 z-50 bg-[#F7F4EC] border-4 border-[#8A9A5B] shadow-[0_8px_0_#8A9A5B] rounded-3xl p-6 text-center max-w-lg w-full animate-fade-in">
+          <div className="absolute top-28 left-1/2 -translate-x-1/2 z-50 bg-[#F7F4EC] border-4 border-[#8A9A5B] shadow-[0_8px_0_#8A9A5B] rounded-3xl p-6 text-center max-w-lg w-full">
             <span className="text-xs font-black text-[#8A9A5B] block mb-1">الإجابة والوجهة الصحيحة هي:</span>
             <div className="text-4xl font-black text-[#24221E] mb-2">{currentItem.target}</div>
             <span className="text-xs font-bold text-[#4A463D] bg-[#F3EFE6] px-3 py-1 rounded-full border border-[#4A463D]/20">

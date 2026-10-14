@@ -38,4 +38,5 @@ export interface TourismRoomState {
   playedItemIds: string[];
   roundReadyPlayers: Record<string, boolean>;
   revealStartedAt?: number | null;
+  skipHintVotes?: Record<string, boolean>;
 }

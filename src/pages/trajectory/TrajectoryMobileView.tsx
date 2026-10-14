@@ -1,4 +1,4 @@
-import { MobileTopBar } from '../../components/common/MobileTopBar';
+import { GameTopBar } from '../../components/layout/GameTopBar';
 import { CopyCodeButton } from '../../components/common/CopyCodeButton';
 import { GeoTopNavControls } from '../../components/common/GeoTopNavControls';
 import { ShareRoomButton } from '../../components/common/ShareRoomButton';
@@ -415,7 +415,7 @@ export const TrajectoryMobileView: React.FC<TrajectoryMobileViewProps> = ({
   if (!isJoined) {
     return (
       <div className="w-full max-w-lg mx-auto h-[100dvh] overflow-hidden bg-[#E5E0D5] bg-[radial-gradient(#C8C1B2_0.75px,transparent_0.75px)] [background-size:24px_24px] text-[#2C2A29] flex flex-col justify-between p-4 select-none" dir="rtl">
-        <MobileTopBar roomCode={roomCode} onExit={handleExitGame} />
+        <GameTopBar roomCode={roomCode} isHost={false} onExit={handleExitGame} />
 
         <main className="my-auto max-w-sm mx-auto w-full">
           <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-6 shadow-[4px_4px_0px_#2C2A29] text-center flex flex-col gap-4">
@@ -465,7 +465,14 @@ export const TrajectoryMobileView: React.FC<TrajectoryMobileViewProps> = ({
   return (
     <div dir="rtl" className="w-full max-w-lg mx-auto h-[100dvh] flex flex-col justify-between p-3.5 pb-36 overflow-y-auto bg-[#E5E0D5] bg-[radial-gradient(#C8C1B2_0.75px,transparent_0.75px)] [background-size:24px_24px] text-[#2C2A29] font-sans select-none"
     >
-      <MobileTopBar roomCode={room?.code || roomId} onExit={handleExitGame} points={trajectoryPlayer?.score || 0} title={isLobby ? 'لوبي الانتظار' : isPlaying ? `الجولة ${trajectoryState?.currentRound || 1} من ${trajectoryState?.totalRounds || 5}` : undefined} />
+      <GameTopBar
+        roomCode={room?.code || roomId}
+        isHost={false}
+        currentRound={trajectoryState?.currentRound || 1}
+        totalRounds={trajectoryState?.totalRounds || 5}
+        gameTitle="على مسار الخط"
+        onExit={handleExitGame}
+      />
 
       {/* Main Content Areas based on Game State */}
       <main className="flex-1 flex flex-col p-4 max-w-md w-full mx-auto justify-between">
@@ -601,7 +608,7 @@ export const TrajectoryMobileView: React.FC<TrajectoryMobileViewProps> = ({
 
                 {/* Selected Country Card */}
                 {selectedCountry && (
-                  <div className="bg-[#8A9A5B]/15 border-2 border-[#8A9A5B]/40 rounded-xl p-3.5 flex items-center justify-between shadow-tactile animate-fade-in">
+                  <div className="bg-[#8A9A5B]/15 border-2 border-[#8A9A5B]/40 rounded-xl p-3.5 flex items-center justify-between shadow-tactile">
                     <div>
                       <span className="text-[11px] font-bold text-[#8A9A5B] block">الدولة المختارة</span>
                       <span className="text-lg font-black text-[#2C2A29]">{selectedCountry.nameAr}</span>

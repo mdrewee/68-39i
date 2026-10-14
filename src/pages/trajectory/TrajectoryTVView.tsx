@@ -3,6 +3,7 @@ import { GeoTopNavControls } from '../../components/common/GeoTopNavControls';
 import { GeographyGameLobby } from '../../components/common/GeographyGameLobby';
 import { CopyCodeButton } from '../../components/common/CopyCodeButton';
 import { LobbyRuleBox } from '../../components/common/LobbyRuleBox';
+import { GameTopBar } from '../../components/layout/GameTopBar';
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
@@ -400,49 +401,15 @@ export const TrajectoryTVView: React.FC = () => {
       className="h-screen w-screen h-[100dvh] overflow-hidden bg-[#E5E0D5] bg-[radial-gradient(#C8C1B2_0.75px,transparent_0.75px)] [background-size:24px_24px] text-[#2C2A29] flex flex-col font-sans select-none"
     >
       {/* Top TV Bar */}
-      <header className="h-16 bg-[#F7F4EC] border-b-2 border-[#2C2A29] px-6 flex items-center justify-between shadow-[4px_4px_0px_#2C2A29] z-40 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#C68B59] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] duration-150 ease-out hover:-translate-y-1 text-white flex items-center justify-center font-black">
-            <Compass className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-black text-[#000000] leading-tight">على مسار الخط</h1>
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#8A9A5B]/20 text-[#8A9A5B] font-bold border border-[#8A9A5B]/30">
-                فئة الجغرافيا
-              </span>
-            </div>
-            <p className="text-xs font-bold text-[#5C4033]">
-              الجولة {trajectoryState?.currentRound || 1} من {trajectoryState?.totalRounds || 5} • المركز الأول لأبعد دولة صالحة
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {isPlaying && (
-            <div
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-xl font-mono font-black text-xl border-2 transition-all shadow-[3px_3px_0px_#2C2A29] ${
-                secondsRemaining <= 5
-                  ? 'bg-[#A35A5A] text-white border-[#2C2A29] animate-pulse'
-                  : 'bg-[#C68B59] text-white border-[#2C2A29]'
-              }`}
-            >
-              <Clock className="w-5 h-5" />
-              <span>{secondsRemaining}s</span>
-            </div>
-          )}
-
-          {/* Strictly HIDE room code during active gameplay on TV screen */}
-          <GeoTopNavControls
-            roomCode={roomId}
-            showRoomCode={false}
-            showFullscreen={true}
-            exitActionType="return_lobby"
-            exitLabel="العودة للوبي"
-            onReturnToLobby={handleResetToLobby}
-          />
-        </div>
-      </header>
+      <GameTopBar
+        roomCode={roomId}
+        isHost={true}
+        currentRound={trajectoryState?.currentRound || 1}
+        totalRounds={trajectoryState?.totalRounds || 5}
+        gameTitle="على مسار الخط"
+        onTerminate={handleResetToLobby}
+        onExit={handleResetToLobby}
+      />
 
       <style>{`
         @keyframes reactionPop {
@@ -628,11 +595,21 @@ export const TrajectoryTVView: React.FC = () => {
                   {submittedCount} / {playersList.length}
                 </span>
               </div>
+              {isPlaying && (
+                <>
+                  <div className="h-8 w-px bg-[#2C2A29]/20" />
+                  <div className={`px-3.5 py-1.5 rounded-xl border-2 border-[#2C2A29] font-mono font-black text-base shadow-[2px_2px_0px_#2C2A29] ${
+                    secondsRemaining <= 5 ? 'bg-[#A35A5A] text-white' : 'bg-[#C68B59] text-white'
+                  }`}>
+                    <span>{secondsRemaining}s</span>
+                  </div>
+                </>
+              )}
             </div>
           )}
           {/* Prominent Results Action Floating Bar over Main Map Canvas */}
           {(isRevealing || isIntermission) && (
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl px-6 py-3 shadow-[6px_6px_0px_#2C2A29] flex items-center gap-6 animate-fade-in">
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl px-6 py-3 shadow-[6px_6px_0px_#2C2A29] flex items-center gap-6">
               <div className="text-right">
                 <span className="text-xs font-bold text-[#5C4033] block">
                   جاهزية المتسابقين ({readyPlayerIds.size} / {playersList.length})
@@ -693,7 +670,7 @@ export const TrajectoryTVView: React.FC = () => {
                         <div className="font-black text-sm text-white flex items-center gap-1.5">
                           <span>{p.name}</span>
                           {reactions[p.id] && (
-                            <span className="text-lg inline-block drop-shadow animate-bounce">
+                            <span className="text-lg inline-block drop-shadow">
                               {reactions[p.id]}
                             </span>
                           )}
@@ -784,7 +761,7 @@ export const TrajectoryTVView: React.FC = () => {
 
         {/* FINAL PODIUM OVERLAY */}
         {isGameOver && (
-          <div className="absolute inset-0 bg-[#E5E0D5]/95 backdrop-blur-md z-50 flex flex-col items-center justify-center p-8 animate-fade-in">
+          <div className="absolute inset-0 bg-[#E5E0D5]/95 backdrop-blur-md z-50 flex flex-col items-center justify-center p-8">
             <div className="max-w-2xl w-full bg-[#DDD8CC] border-3 border-[#2C2A29]/20 rounded-3xl p-8 shadow-tactile text-center">
               <div className="w-20 h-20 rounded-2xl bg-[#C68B59] text-white flex items-center justify-center shadow-tactile mx-auto mb-4">
                 <Trophy className="w-12 h-12 text-white" />

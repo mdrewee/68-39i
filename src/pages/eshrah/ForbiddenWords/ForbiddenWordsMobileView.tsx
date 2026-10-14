@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Check, X, AlertOctagon, Clock, Users, Play, ShieldAlert, Award } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { MobileTopBar } from '../../../components/MobileTopBar';
+import { GameTopBar } from '../../../components/layout/GameTopBar';
 import { CleanTeamSelection } from '../../../components/eshrah/CleanTeamSelection';
 import {
   EshrahPlayer,
@@ -159,12 +159,14 @@ export const ForbiddenWordsMobileView: React.FC = () => {
       />
 
       {/* TopBar */}
-      <div className="relative z-20">
-        <MobileTopBar
-          roomCode={roomCode}
-          onExit={() => navigate('/')}
-        />
-      </div>
+      <GameTopBar
+        roomCode={roomCode}
+        isHost={false}
+        gameTitle="كلمات محظورة"
+        currentRound={phase !== 'TEAMS' ? currentRound : undefined}
+        totalRounds={phase !== 'TEAMS' ? 3 : undefined}
+        onExit={() => navigate('/')}
+      />
 
       <main className="flex-1 flex flex-col p-4 relative z-10 max-w-lg mx-auto w-full">
         {/* ================= 1. TEAMS (LOBBY SELECTION ON MOBILE) ================= */}
@@ -249,7 +251,7 @@ export const ForbiddenWordsMobileView: React.FC = () => {
               /* AUDITOR / OPPONENT PREP VIEW */
               <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 my-auto">
                 <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-3xl p-6 shadow-[4px_4px_0px_#2C2A29] w-full flex flex-col items-center gap-3">
-                  <Clock className="w-12 h-12 text-[#C68B59] animate-pulse" />
+                  <Clock className="w-12 h-12 text-[#C68B59]" />
                   <h3 className="text-xl font-black text-[#2C2A29]">
                     الفريق المنافس يستعد للشرح!
                   </h3>

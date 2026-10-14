@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Clock, Trophy, Play, CheckCircle2, AlertTriangle, ShieldCheck, UserCheck, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { EshrahTopBar } from '../../../components/eshrah/EshrahTopBar';
+import { GameTopBar } from '../../../components/layout/GameTopBar';
 import { EshrahTVLobby } from '../../../components/eshrah/EshrahTVLobby';
 import { EshrahPodium } from '../../../components/eshrah/EshrahPodium';
 import {
@@ -11,7 +11,8 @@ import {
   EshrahTeamId,
   EshrahGamePhase
 } from '../../../types/eshrah';
-import { PuppetActionItem, getRandomPuppetAction } from '../../../data/puppetActionsBank';
+import { DOLL_SCENES, DollSceneItem } from '../../../data/dollScenes';
+import { pickNextUnusedItem } from '../../../utils/sessionQuestionManager';
 import { sound } from '../../../lib/audio';
 
 export const MoveThePuppetTVView: React.FC = () => {
@@ -192,8 +193,8 @@ export const MoveThePuppetTVView: React.FC = () => {
     handleAdvanceNextTurn();
   };
 
-  // Referee Action (Correct / Steal / Fail) -> Instant Round Progression!
-  const handleRefereeAction = (payload: { action: 'CORRECT' | 'STEAL_SUCCESS' | 'STEAL_FAIL' }) => {
+  // Referee Action (Correct / Steal / Fail / Did Not Get) -> Instant Progression!
+  const handleRefereeAction = (payload: { action: 'CORRECT' | 'STEAL_SUCCESS' | 'STEAL_FAIL' | 'DID_NOT_GET' | 'TRIGGER_STEAL' }) => {
     const { action } = payload;
     const opponentTeam: EshrahTeamId = activeTeamRef.current === 'team_1' ? 'team_2' : 'team_1';
 
@@ -209,6 +210,12 @@ export const MoveThePuppetTVView: React.FC = () => {
       }
       // Instant transition!
       handleAdvanceNextTurn();
+    } else if (action === 'DID_NOT_GET' || action === 'TRIGGER_STEAL') {
+      sound.playTimeout();
+      setIsTimerRunning(false);
+      setPhase('STEAL_WINDOW');
+      setStealTimeLeft(15);
+      broadcastSync({ phase: 'STEAL_WINDOW', stealTimeLeft: 15 });
     } else if (action === 'STEAL_SUCCESS') {
       sound.playVictory();
       if (opponentTeam === 'team_1') {
@@ -247,7 +254,7 @@ export const MoveThePuppetTVView: React.FC = () => {
       return;
     }
 
-    const nextAct = getRandomPuppetAction(usedActionIds);
+    const nextAct = pickNextUnusedItem(roomCode, 'move_the_puppet', DOLL_SCENES) || DOLL_SCENES[0];
     setUsedActionIds((prev) => new Set([...prev, nextAct.id]));
     setCurrentAction(nextAct);
     currentActionRef.current = nextAct;
@@ -273,7 +280,7 @@ export const MoveThePuppetTVView: React.FC = () => {
 
   // Launch Match from Lobby (NO CATEGORY SELECTION)
   const handleLaunchMatch = () => {
-    const firstAct = getRandomPuppetAction(usedActionIds);
+    const firstAct = pickNextUnusedItem(roomCode, 'move_the_puppet', DOLL_SCENES) || DOLL_SCENES[0];
     setUsedActionIds(new Set([firstAct.id]));
     setCurrentAction(firstAct);
     currentActionRef.current = firstAct;
@@ -323,16 +330,16 @@ export const MoveThePuppetTVView: React.FC = () => {
         }}
       />
 
-      {/* TopBar */}
-      <div className="relative z-20">
-        <EshrahTopBar
-          roomCode={roomCode}
-          gameTitle="حرّك الدمية"
-          phase={phase}
-          onTerminate={handleEndRoom}
-          onExit={handleEndRoom}
-        />
-      </div>
+      {/* Standardized GameTopBar */}
+      <GameTopBar
+        roomCode={roomCode}
+        isHost={true}
+        gameTitle="حرّك الدمية"
+        currentRound={phase !== 'TEAMS' ? currentRound : undefined}
+        totalRounds={phase !== 'TEAMS' ? 5 : undefined}
+        onTerminate={handleEndRoom}
+        onExit={handleEndRoom}
+      />
 
       <main className="flex-1 flex flex-col items-center justify-between p-4 md:p-6 relative z-10 max-w-6xl mx-auto w-full">
         {/* ================= 1. TEAMS (LOBBY) ================= */}

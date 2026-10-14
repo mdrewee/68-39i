@@ -82,7 +82,8 @@ export type ClientIntentAction =
   | 'TOURISM_LOCK_IN'
   | 'TOURISM_ROUND_READY'
   | 'TOURISM_RESET_LOBBY'
-  | 'TOURISM_RESOLVE_REVEAL';
+  | 'TOURISM_RESOLVE_REVEAL'
+  | 'TOURISM_SKIP_HINT';
 
 export interface ClientIntent {
   intentId: string;
@@ -1261,6 +1262,10 @@ class RoomBus {
       }
       case 'TOURISM_RESET_LOBBY': {
         this.resetTourismToLobby(cleanCode);
+        break;
+      }
+      case 'TOURISM_SKIP_HINT': {
+        this.voteSkipTourismHint(cleanCode, intent.playerId);
         break;
       }
     }
@@ -3744,6 +3749,7 @@ class RoomBus {
     room.tourismState.gameState = 'PLAYING';
     room.tourismState.roundReadyPlayers = {};
     room.tourismState.revealStartedAt = null;
+    room.tourismState.skipHintVotes = {};
 
     // Reset player round answers
     room.players.forEach((p) => {
@@ -3797,8 +3803,9 @@ class RoomBus {
           // Advance to next progressive hint stage
           tState.currentStage += 1;
           tState.stageEndsAt = Date.now() + 15000;
+          tState.skipHintVotes = {};
           this.saveRoom(currentRoom);
-          this.emit('STATE_UPDATED', clean, currentRoom);
+          this.broadcastState(currentRoom);
           sound.playTick();
         } else {
           // All 5 hint stages expired -> Resolve Reveal
@@ -3809,6 +3816,47 @@ class RoomBus {
     }, 500);
 
     this.timerIntervals.set(room.id + '_tourism', interval);
+  }
+
+  public voteSkipTourismHint(roomId: string, playerId: string): void {
+    const clean = cleanRoomCode(roomId);
+    if (!this.isHosting(clean)) {
+      this.sendIntent(clean, 'TOURISM_SKIP_HINT', playerId);
+      return;
+    }
+
+    const room = this.getRoom(clean);
+    if (!room || !room.tourismState || room.tourismState.gameState !== 'PLAYING') return;
+
+    const tState = room.tourismState;
+    if (!tState.skipHintVotes) {
+      tState.skipHintVotes = {};
+    }
+    tState.skipHintVotes[playerId] = true;
+
+    const activePlayers = room.players.filter((p) => p.isOnline !== false && !p.isBot);
+    const votes = Object.keys(tState.skipHintVotes).filter((k) => tState.skipHintVotes![k]).length;
+    const requiredVotes = Math.max(1, Math.ceil((activePlayers.length || 1) / 2));
+
+    if (votes >= requiredVotes) {
+      tState.skipHintVotes = {};
+      if (tState.currentStage < 5) {
+        tState.currentStage += 1;
+        tState.stageEndsAt = Date.now() + 15000;
+        this.saveRoom(room);
+        this.broadcastState(room);
+        sound.playTick();
+      } else {
+        if (this.timerIntervals.has(room.id + '_tourism')) {
+          clearInterval(this.timerIntervals.get(room.id + '_tourism'));
+        }
+        this.resolveTourismReveal(clean);
+      }
+    } else {
+      this.saveRoom(room);
+      this.broadcastState(room);
+      sound.playClick();
+    }
   }
 
   public lockInTourismAnswer(roomId: string, playerId: string, answer: string): void {

@@ -10,6 +10,9 @@ interface EshrahTVLobbyProps {
   gameRuleSnippet: string;
   players: EshrahPlayer[];
   onStartMatch: () => void;
+  categories?: { id: string; label: string }[];
+  selectedCategories?: string[];
+  onToggleCategory?: (id: any) => void;
 }
 
 export const EshrahTVLobby: React.FC<EshrahTVLobbyProps> = ({
@@ -17,7 +20,10 @@ export const EshrahTVLobby: React.FC<EshrahTVLobbyProps> = ({
   gameTitle,
   gameRuleSnippet,
   players,
-  onStartMatch
+  onStartMatch,
+  categories,
+  selectedCategories,
+  onToggleCategory
 }) => {
   const team1Players = players.filter((p) => p.teamId === 'team_1');
   const team2Players = players.filter((p) => p.teamId === 'team_2');
@@ -78,15 +84,42 @@ export const EshrahTVLobby: React.FC<EshrahTVLobbyProps> = ({
             </p>
           </div>
 
-          {/* Device notice */}
-          <div className="flex items-center gap-2 bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-2xl px-4 py-2.5 text-xs font-bold text-[#2C2A29]">
-            <Sparkles className="w-4 h-4 text-[#C68B59] shrink-0" />
-            <span>
-              <strong>ملاحظة:</strong> اختيار الفرق وتوزيع اللاعبين يتم مباشرة من شاشات الجوالات.
-            </span>
-          </div>
+
         </div>
       </div>
+
+      {/* Category Selection for TV Host */}
+      {categories && categories.length > 0 && onToggleCategory && (
+        <div className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] rounded-2xl p-4 shadow-[3px_3px_0px_#2C2A29]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-black text-[#2C2A29]">
+              تصنيفات اللعبة (تحكم المضيف على TV):
+            </span>
+            <span className="text-[11px] font-bold text-[#5C4033]">
+              المحدد: {selectedCategories?.length || 0} من {categories.length}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {categories.map((cat) => {
+              const isSelected = selectedCategories?.includes(cat.id);
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => onToggleCategory(cat.id)}
+                  type="button"
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black border-2 border-[#2C2A29] transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'bg-[#8A9A5B] text-white shadow-[2px_2px_0px_#2C2A29]'
+                      : 'bg-[#E5E0D5] text-[#2C2A29]/70 shadow-none'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 2. Team Displays (Read-Only on TV) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">

@@ -11,6 +11,8 @@ import { normalizeArabicFootball } from '../../../utils/wikidataFootballService'
 import { SafeEntityBadge } from './components/SafeEntityBadge';
 import { sound } from '../../../lib/audio';
 import { Trophy, Send, CheckCircle2 } from 'lucide-react';
+import { GameTopBar } from '../../../components/layout/GameTopBar';
+import { MobileReadyButton } from '../../../components/common/MobileReadyButton';
 
 export const MutualLinkMobileView: FC = () => {
   const { code: rawCode } = useParams<{ code: string }>();
@@ -19,13 +21,20 @@ export const MutualLinkMobileView: FC = () => {
 
   // Player Profile
   const [playerId] = useState<string>(() => {
-    return sessionStorage.getItem('mutual_player_id') || `p_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    let pid = sessionStorage.getItem('party_player_id') || sessionStorage.getItem('mutual_player_id');
+    if (!pid) {
+      pid = `p_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      sessionStorage.setItem('party_player_id', pid);
+    }
+    return pid;
   });
-  const [playerName, setPlayerName] = useState<string>(() => {
-    return sessionStorage.getItem('mutual_player_name') || '';
-  });
-  const [hasJoined, setHasJoined] = useState<boolean>(() => {
-    return !!sessionStorage.getItem('mutual_player_name');
+  const [playerName] = useState<string>(() => {
+    const name =
+      sessionStorage.getItem('party_player_name') ||
+      sessionStorage.getItem('mutual_player_name') ||
+      'لاعب';
+    sessionStorage.setItem('mutual_player_name', name);
+    return name;
   });
   const [isReady, setIsReady] = useState<boolean>(false);
 
@@ -52,11 +61,9 @@ export const MutualLinkMobileView: FC = () => {
   const channelRef = useRef<RealtimeChannel | null>(null);
   const playerIdRef = useRef<string>(playerId);
   const playerNameRef = useRef<string>(playerName);
-  const hasJoinedRef = useRef<boolean>(hasJoined);
 
   useEffect(() => { playerIdRef.current = playerId; }, [playerId]);
   useEffect(() => { playerNameRef.current = playerName; }, [playerName]);
-  useEffect(() => { hasJoinedRef.current = hasJoined; }, [hasJoined]);
 
   // Autocomplete suggestion logic based on challenge valid display names
   useEffect(() => {
@@ -100,27 +107,6 @@ export const MutualLinkMobileView: FC = () => {
       guessText: answer,
     });
   }, [isLockedOut, phase, query, broadcastEvent]);
-
-  // Handle Clean Brutalist Join
-  const handleJoin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanName = playerName.trim();
-    if (!cleanName) return;
-
-    sound.playClick();
-    sessionStorage.setItem('mutual_player_id', playerId);
-    sessionStorage.setItem('mutual_player_name', cleanName);
-    sessionStorage.setItem('mutual_room', roomCode);
-    setHasJoined(true);
-
-    if (channelRef.current) {
-      channelRef.current.track({
-        id: playerId,
-        name: cleanName,
-        joinedAt: Date.now(),
-      });
-    }
-  };
 
   // Realtime Supabase Channel
   useEffect(() => {
@@ -219,7 +205,7 @@ export const MutualLinkMobileView: FC = () => {
         }
       })
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED' && hasJoinedRef.current) {
+        if (status === 'SUBSCRIBED') {
           channel.track({
             id: playerIdRef.current,
             name: playerNameRef.current,
@@ -237,76 +223,27 @@ export const MutualLinkMobileView: FC = () => {
     };
   }, [roomCode, playerId, navigate]);
 
-  // RENDER: Clean Brutalist Join Screen (Zero Emojis / No Avatar Picker)
-  if (!hasJoined) {
-    return (
-      <div
-        className="min-h-screen w-full bg-[#E5E0D5] text-[#2C2A29] flex flex-col justify-center items-center p-4 font-sans"
-        dir="rtl"
-      >
-        <div className="w-full max-w-sm bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl p-6 space-y-6">
-          <div className="text-center space-y-1">
-            <h1 className="text-2xl font-black text-[#2C2A29]">حلقة الوصل</h1>
-            <p className="text-xs font-bold text-[#5C4033]">
-              غرفة: <span className="font-mono font-black">{roomCode}</span>
-            </p>
-          </div>
-
-          <form onSubmit={handleJoin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-black text-[#2C2A29] mb-1.5">
-                اسم اللاعب
-              </label>
-              <input
-                type="text"
-                required
-                maxLength={20}
-                value={playerName}
-                onChange={(e) => setPlayerName(e.target.value)}
-                placeholder="اكتب اسمك..."
-                className="w-full bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] rounded-xl px-4 py-3 font-black text-sm text-[#2C2A29] focus:outline-none focus:bg-white"
-              />
-            </div>
-
-            {/* Clean Large Olivine Green Join Button */}
-            <button
-              type="submit"
-              className="w-full bg-[#8A9A5B] hover:bg-[#78884E] text-[#F7F4EC] border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none py-3.5 rounded-xl font-black text-base transition-all cursor-pointer"
-            >
-              دخول
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  // RENDER: Active Mobile Controller
+  // RENDER: Active Mobile Controller directly (Zero Duplicate Name Screen)
   return (
     <div
       className="min-h-screen w-full bg-[#E5E0D5] text-[#2C2A29] flex flex-col font-sans select-none overflow-x-hidden"
       dir="rtl"
     >
-      {/* Mobile Top Header */}
-      <header className="bg-[#E5E0D5] border-b-2 border-[#2C2A29] px-4 py-3 flex items-center justify-between shadow-sm">
-        <div className="flex items-center gap-2">
-          <span className="font-black text-sm text-[#2C2A29] truncate max-w-[140px]">
-            {playerName}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {phase !== 'LOBBY' && (
-            <span className="bg-[#F7F4EC] border-2 border-[#2C2A29] px-2.5 py-0.5 rounded-lg text-xs font-black shadow-[1px_1px_0px_#2C2A29]">
-              جولة {round}/{maxRounds}
-            </span>
-          )}
-          <div className="flex items-center gap-1 bg-[#8A9A5B] text-[#F7F4EC] border-2 border-[#2C2A29] px-2.5 py-0.5 rounded-lg text-xs font-black shadow-[1px_1px_0px_#2C2A29]">
-            <Trophy size={12} />
-            <span className="font-mono">{myScore}</span>
-          </div>
-        </div>
-      </header>
+      {/* Standardized Brutalist GameTopBar */}
+      <GameTopBar
+        roomCode={roomCode}
+        isHost={false}
+        gameTitle="حلقة الوصل"
+        currentRound={phase !== 'LOBBY' ? round : undefined}
+        totalRounds={phase !== 'LOBBY' ? maxRounds : undefined}
+        onExit={() => {
+          if (channelRef.current) {
+            channelRef.current.untrack();
+            supabase.removeChannel(channelRef.current);
+          }
+          navigate('/');
+        }}
+      />
 
       {/* Main Content Body */}
       <main className="flex-1 flex flex-col p-4 space-y-4 max-w-md mx-auto w-full justify-between">
@@ -325,29 +262,22 @@ export const MutualLinkMobileView: FC = () => {
               </p>
             </div>
 
-            {/* Large Olivine Green Ready Button */}
-            <button
-              type="button"
-              onClick={() => {
-                sound.playClick();
-                const nextReady = !isReady;
-                setIsReady(nextReady);
-                broadcastEvent({
-                  action: 'PLAYER_READY',
-                  playerId: playerIdRef.current,
-                  playerName: playerNameRef.current,
-                  isReady: nextReady,
-                });
-              }}
-              className={`w-full max-w-xs py-4 px-6 rounded-2xl font-black text-lg border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all cursor-pointer flex items-center justify-center gap-2 ${
-                isReady
-                  ? 'bg-[#8A9A5B] text-[#F7F4EC]'
-                  : 'bg-[#F7F4EC] text-[#2C2A29] hover:bg-white'
-              }`}
-            >
-              <CheckCircle2 size={22} className={isReady ? 'text-[#F7F4EC]' : 'text-[#8A9A5B]'} />
-              <span>{isReady ? 'أنا جاهز ✓' : 'أنا جاهز'}</span>
-            </button>
+            {/* Standardized Olivine Green Ready Button */}
+            <div className="w-full max-w-xs">
+              <MobileReadyButton
+                isReady={isReady}
+                onToggle={() => {
+                  const nextReady = !isReady;
+                  setIsReady(nextReady);
+                  broadcastEvent({
+                    action: 'PLAYER_READY',
+                    playerId: playerIdRef.current,
+                    playerName: playerNameRef.current,
+                    isReady: nextReady,
+                  });
+                }}
+              />
+            </div>
 
             <div className="bg-[#F7F4EC] border-2 border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] px-4 py-2 rounded-xl text-xs font-mono font-bold text-[#5C4033]">
               غرفة: {roomCode}

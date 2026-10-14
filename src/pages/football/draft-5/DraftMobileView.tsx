@@ -8,6 +8,7 @@ import {
   DraftEventPayload,
   DRAFT_POSITION_NAMES,
   PlayerSquad,
+  DraftContestant,
 } from './types';
 import { DraftCondition } from '../../../data/draftConditions';
 import { DRAFT_CURATED_CLUBS, DraftClub } from '../../../data/draftClubs';
@@ -15,6 +16,7 @@ import { FootballPlayer } from '../../../data/footballMasterData';
 import { searchFootballPlayers } from '../../../utils/footballSearch';
 import { DraftTacticalPitch } from './components/DraftTacticalPitch';
 import { DraftClubPickerModal } from './components/DraftClubPickerModal';
+import { evaluateSquad } from '../../../utils/aiTacticalJudge';
 import { sound } from '../../../lib/audio';
 import { CheckCircle2, Shield, User, Trophy, Pin, RefreshCw } from 'lucide-react';
 
@@ -1028,55 +1030,113 @@ export const DraftMobileView: FC = () => {
         {/* =======================================================
             STATE: AI_REVEAL & ROUND BREAK
             ======================================================= */}
-        {phase === 'AI_REVEAL' && (
-          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-5 py-4 animate-fade-in">
-            <div className="w-16 h-16 bg-[#8A9A5B] border-3 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] rounded-2xl flex items-center justify-center text-3xl animate-bounce text-white">
-              ⚡
-            </div>
+        {phase === 'AI_REVEAL' && (() => {
+          const personalEval = (() => {
+            try {
+              const c: DraftContestant = {
+                id: playerId,
+                name: playerName,
+                isReady: true,
+                selectedClub,
+                picks: myPicks,
+                pickConditions: myConditions,
+              };
+              return evaluateSquad(c);
+            } catch {
+              return null;
+            }
+          })();
 
-            <div className="space-y-1">
-              <h2 className="text-xl sm:text-2xl font-black text-[#2C2A29]">
-                {round >= 5 ? 'اختتام المنافسة الكبرى!' : `نهاية الجولة ${round} من 5!`}
-              </h2>
-              <p className="text-xs font-bold text-[#5C4033] max-w-xs mx-auto">
-                {round >= 5
-                  ? 'شاهد شاشة العرض الرئيسية الآن لتتويج البطل النهائي!'
-                  : 'تابع شاشة العرض لنتائج الجولة، واضغط الزر أدناه عند استعدادك للجولة التالية!'}
-              </p>
-            </div>
+          return (
+            <div className="flex-1 flex flex-col items-center justify-start text-center space-y-4 py-3">
+              <div className="w-14 h-14 bg-[#8A9A5B] border-3 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-2xl flex items-center justify-center text-2xl text-white">
+                ⚡
+              </div>
 
-            {/* Next Round Ready Button (Ochre Orange bg-[#C68B59]) */}
-            {round < 5 && (
-              <button
-                type="button"
-                onClick={() => {
-                  sound.playClick();
-                  const nextState = !readyForNextRound;
-                  setReadyForNextRound(nextState);
-                  broadcastEvent({
-                    action: 'PLAYER_NEXT_ROUND_READY',
-                    playerId: playerIdRef.current,
-                    playerName: playerNameRef.current,
-                    isReady: nextState,
-                  });
-                }}
-                className={`w-full max-w-xs py-3.5 px-6 rounded-2xl font-black text-base border-3 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-x-[1px] active:translate-y-[1px] cursor-pointer transition-all flex items-center justify-center gap-2 ${
-                  readyForNextRound
-                    ? 'bg-[#8A9A5B] text-white'
-                    : 'bg-[#C68B59] hover:bg-[#B57A48] text-white'
-                }`}
-              >
-                <RefreshCw size={18} className={readyForNextRound ? 'animate-spin' : ''} />
-                <span>{readyForNextRound ? 'بانتظار انطلاق الجولة التالية ✓' : 'جاهز للجولة التالية'}</span>
-              </button>
-            )}
+              <div className="space-y-1">
+                <h2 className="text-xl sm:text-2xl font-black text-[#2C2A29]">
+                  {round >= 5 ? 'اختتام المنافسة والتقييم النهائي!' : `نهاية الجولة ${round} من 5!`}
+                </h2>
+                <p className="text-xs font-bold text-[#5C4033] max-w-xs mx-auto">
+                  {round >= 5
+                    ? 'شاهد شاشة التلفزيون لتتويج البطل والتحليل الشامل!'
+                    : 'تابع شاشة التلفزيون واضغط الزر أدناه عند استعدادك للجولة التالية!'}
+                </p>
+              </div>
 
-            {/* Miniature pitch preview of player's picks */}
-            <div className="w-full pt-2">
-              <DraftTacticalPitch picks={myPicks} interactive={false} />
+              {/* Personal Mobile AI Evaluation Card */}
+              {personalEval && (
+                <div className="w-full bg-[#F7F4EC] border-2 sm:border-3 border-[#2C2A29] rounded-2xl p-4 shadow-[3px_3px_0px_#2C2A29] text-center space-y-3">
+                  <div className="flex items-center justify-between border-b-2 border-[#2C2A29]/15 pb-2">
+                    <span className="text-xs font-black bg-[#8A9A5B] text-white border border-[#2C2A29] px-2.5 py-0.5 rounded-lg shadow-[1px_1px_0px_#2C2A29]">
+                      تقييم الذكاء الاصطناعي لفريقك
+                    </span>
+                    <span className="text-xs font-bold text-[#2C2A29]">
+                      {selectedClub?.name || 'فريقك'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 items-center">
+                    <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl p-2.5 shadow-[2px_2px_0px_#2C2A29]">
+                      <span className="text-[11px] font-bold text-[#2C2A29]/70 block mb-0.5">نسبة قوة فريقك</span>
+                      <span className="text-3xl font-black text-[#8A9A5B] font-mono leading-none">
+                        {personalEval.overallPercentage}%
+                      </span>
+                    </div>
+
+                    <div className="bg-[#E5E0D5] border-2 border-[#2C2A29] rounded-xl p-2.5 shadow-[2px_2px_0px_#2C2A29]">
+                      <span className="text-[11px] font-bold text-[#2C2A29]/70 block mb-0.5">الشروط المحققة</span>
+                      <span className="text-2xl font-black text-[#2C2A29] leading-none">
+                        {personalEval.validConditionsCount} من 5
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Punchy Tactical Pundit Summary (1-2 lines) */}
+                  <div className="bg-white border-2 border-[#2C2A29] rounded-xl p-3 shadow-[2px_2px_0px_#2C2A29]">
+                    <span className="text-[10px] font-black text-[#C68B59] block mb-1">
+                      {personalEval.critiqueTitle}
+                    </span>
+                    <p className="text-xs sm:text-sm font-black text-[#2C2A29] leading-snug">
+                      {personalEval.critiqueSummary}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Next Round Ready Button (Ochre Orange bg-[#C68B59]) */}
+              {round < 5 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playClick();
+                    const nextState = !readyForNextRound;
+                    setReadyForNextRound(nextState);
+                    broadcastEvent({
+                      action: 'PLAYER_NEXT_ROUND_READY',
+                      playerId: playerIdRef.current,
+                      playerName: playerNameRef.current,
+                      isReady: nextState,
+                    });
+                  }}
+                  className={`w-full max-w-xs py-3.5 px-6 rounded-2xl font-black text-base border-3 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] active:translate-y-0.5 cursor-pointer transition-all flex items-center justify-center gap-2 ${
+                    readyForNextRound
+                      ? 'bg-[#8A9A5B] text-white'
+                      : 'bg-[#C68B59] hover:opacity-95 text-white'
+                  }`}
+                >
+                  <RefreshCw size={18} />
+                  <span>{readyForNextRound ? 'بانتظار انطلاق الجولة التالية ✓' : 'جاهز للجولة التالية'}</span>
+                </button>
+              )}
+
+              {/* Miniature pitch preview of player's picks */}
+              <div className="w-full pt-1">
+                <DraftTacticalPitch picks={myPicks} interactive={false} />
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </main>
 
       {/* 20 Curated Clubs Modal */}

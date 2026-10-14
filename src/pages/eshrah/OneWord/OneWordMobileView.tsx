@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Check, ArrowRightLeft, Users, Trophy, Play, Clock, Sparkles } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { MobileTopBar } from '../../../components/MobileTopBar';
+import { GameTopBar } from '../../../components/layout/GameTopBar';
 import { CleanTeamSelection } from '../../../components/eshrah/CleanTeamSelection';
 import {
   EshrahPlayer,
@@ -163,13 +163,15 @@ export const OneWordMobileView: React.FC = () => {
         }}
       />
 
-      {/* TopBar */}
-      <div className="relative z-20">
-        <MobileTopBar
-          roomCode={roomCode}
-          onExit={() => navigate('/')}
-        />
-      </div>
+      {/* Standardized GameTopBar */}
+      <GameTopBar
+        roomCode={roomCode}
+        isHost={false}
+        gameTitle="كلمة واحدة"
+        currentRound={phase !== 'TEAMS' ? currentRound : undefined}
+        totalRounds={phase !== 'TEAMS' ? 5 : undefined}
+        onExit={() => navigate('/')}
+      />
 
       <main className="flex-1 flex flex-col p-4 relative z-10 max-w-lg mx-auto w-full">
         {/* ================= 1. TEAMS (LOBBY SELECTION ON MOBILE) ================= */}

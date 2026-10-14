@@ -354,7 +354,7 @@ export const WordleRushTVView: React.FC = () => {
         {/* Auto Start Countdown Overlay if >= 2 players ready */}
         {autoStartCountdown !== null && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
-            <div className="bg-[#F7F4EC] border-4 border-[#2C2A29] shadow-[8px_8px_0px_#2C2A29] rounded-3xl p-10 text-center animate-bounce">
+            <div className="bg-[#F7F4EC] border-4 border-[#2C2A29] shadow-[8px_8px_0px_#2C2A29] rounded-3xl p-10 text-center">
               <span className="text-sm font-black text-[#8A9A5B] block mb-2">اكتملت جاهزية المتسابقين!</span>
               <div className="text-7xl font-black text-[#C68B59] my-4">{autoStartCountdown}</div>
               <p className="text-xs font-bold text-[#5C4033]">تنطلق الجولة تلقائياً...</p>

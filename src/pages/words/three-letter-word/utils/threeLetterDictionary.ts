@@ -1,6 +1,7 @@
 import { arabicDict } from '../../../../utils/arabicDictionary';
 import { ThreeLetterCardItem, BoardSlotState, MoveAttemptResult } from '../types';
 import { verifiedThreeLetterWordsSet, normalizeArabicWord } from '../data/verifiedThreeLetterWords';
+import { isNotArchaic } from '../../../../utils/commonArabicWords';
 
 export { normalizeArabicWord };
 
@@ -45,8 +46,13 @@ export const isValidThreeLetterWord = (candidate: string): boolean => {
   const normalized = normalizeArabicWord(candidate);
   if (normalized.length !== 3) return false;
 
-  // Reject banned particles, prepositions, imperatives
-  if (BANNED_PARTICLES_AND_COMMANDS.has(normalized) || BANNED_PARTICLES_AND_COMMANDS.has(candidate)) {
+  // Reject banned particles, prepositions, imperatives, and archaic obsolete words
+  if (
+    BANNED_PARTICLES_AND_COMMANDS.has(normalized) ||
+    BANNED_PARTICLES_AND_COMMANDS.has(candidate) ||
+    !isNotArchaic(normalized) ||
+    !isNotArchaic(candidate)
+  ) {
     return false;
   }
 
