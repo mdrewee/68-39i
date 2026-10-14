@@ -1,531 +1,516 @@
-import { supabase } from '../lib/supabase';
 import {
   DraftContestant,
   SquadAIEvaluation,
   SquadEvaluationResult,
   DraftVerdictResult,
   PlayerConditionVerification,
+  PlayerSquad,
   DRAFT_SLOTS_ORDER,
   DraftPosition,
 } from '../pages/football/draft-5/types';
-
-export type { SquadEvaluationResult };
-import { DraftCondition } from '../data/draftConditions';
+import { DraftCondition, DRAFT_CONDITIONS_BANK } from '../data/draftConditions';
 import { FootballPlayer, FOOTBALL_PLAYERS_MASTER } from '../data/footballMasterData';
 import { normalizeArabicFootball } from './footballHistoryEngine';
 
+export type { SquadEvaluationResult };
+
 /**
- * 3-Pillar AI Tactical Judge Engine
+ * ============================================================================
+ *  Built-in Tactical AI Evaluator — "كوّن فريقك"
+ * ============================================================================
+ *  100% local, synchronous and deterministic. No network / LLM dependency, so
+ *  the TV evaluation screen can never hang or stay blank.
  *
- * Pillar 1: Condition Adherence (فحص استيفاء الشروط)
- * - Evaluates if each player genuinely meets the condition assigned to their slot.
- * - Explicit verdict: [✓ مطابق] or [✗ غير مطابق].
- * - Explicit failure reasons (e.g. "خطأ: ميسي لم يحقق شرط [لاعب أصلع]").
+ *  4 criteria per squad:
+ *   1. Condition Adherence  — did each pick satisfy the condition of its slot?
+ *   2. Position Fit         — real GK in GK, DEF in DEF, MID in MID, FWD in FWD.
+ *   3. Tactical Strength %  — 50 base, +8/condition, +2/position,
+ *                             -15 outfield-GK, +1..+3 legends, clamp 30..99.
+ *   4. Pundit Critique      — witty Arabic breakdown driven by line ratings.
  *
- * Pillar 2: Positional Accuracy (فحص ملاءمة المركز)
- * - Checks whether the footballer actually played or is renowned in that slot:
- *   - GK: Must be a recognized goalkeeper.
- *   - DEF_1 / DEF_2: Center-back, full-back, or defensive wing-back.
- *   - MID: Central, attacking, or defensive midfielder.
- *   - FWD: Striker, winger, or center-forward.
- * - Sarcastic & tactical penalty for out-of-position selections!
- *
- * Pillar 3: Tactical Strength & Percentage Score (تقييم القوة العامة)
- * - Line-by-line rating: Goalkeeping, Defense, Midfield, Attack, Synergy (out of 100).
- * - Overall Strength Percentage (e.g. 88%).
- * - Winner Determination:
- *   Rule 1: Highest number of valid conditions and positions wins first.
- *   Rule 2 (Tie-break): Highest overall strength percentage wins.
+ *  Winner: most valid conditions → highest strength % → most valid positions.
+ * ============================================================================
  */
-export async function evaluateDraftSquadsWithAI(
-  contestants: DraftContestant[],
-  usedConditions: DraftCondition[]
-): Promise<DraftVerdictResult> {
-  try {
-    const payload = contestants.map((c) => {
-      const picksArray = DRAFT_SLOTS_ORDER.map((pos) => {
-        const player = c.picks[pos];
-        const cond = c.pickConditions ? c.pickConditions[pos] : null;
-        return {
-          position: pos,
-          playerName: player?.name || 'لم يحدد',
-          conditionId: cond?.id || '',
-          conditionTitle: cond?.title || 'شرط عام',
-          conditionPrompt: cond?.rulePrompt || cond?.title || '',
-        };
-      });
 
-      return {
-        playerId: c.id,
-        playerName: c.name,
-        selectedClub: c.selectedClub,
-        picks: picksArray,
-      };
+type NaturalPos = 'GK' | 'DEF' | 'MID' | 'FWD';
+
+const norm = (s: string) => normalizeArabicFootball(s || '');
+
+// ---------------------------------------------------------------------------
+// Player resolution (never trust stub pick objects for position/attributes)
+// ---------------------------------------------------------------------------
+let MASTER_INDEX: Map<string, FootballPlayer> | null = null;
+
+function getMasterIndex(): Map<string, FootballPlayer> {
+  if (MASTER_INDEX) return MASTER_INDEX;
+  MASTER_INDEX = new Map();
+  FOOTBALL_PLAYERS_MASTER.forEach((p) => {
+    MASTER_INDEX!.set(norm(p.name), p);
+    (p.aliases || []).forEach((a) => {
+      const k = norm(a);
+      if (k && !MASTER_INDEX!.has(k)) MASTER_INDEX!.set(k, p);
     });
-
-    const response = await supabase.functions.invoke('ai-judge', {
-      body: {
-        mode: 'football_draft_3_pillar',
-        contestants: payload,
-      },
-    });
-
-    if (response.data?.evaluations && Array.isArray(response.data.evaluations)) {
-      return buildVerdictResult(response.data.evaluations as SquadAIEvaluation[], contestants);
-    }
-  } catch (err) {
-    console.warn('[AI Tactical Judge] Edge function unavailable, executing robust local engine:', err);
-  }
-
-  // Resilient Local Engine
-  const evaluations = generateLocalThreePillarEvaluations(contestants);
-  return buildVerdictResult(evaluations, contestants);
+  });
+  return MASTER_INDEX;
 }
 
-/**
- * Determine a player's natural position from master data or name lookup
- */
-export function getPlayerNaturalPosition(player: FootballPlayer | { name: string; position?: string }): 'GK' | 'DEF' | 'MID' | 'FWD' {
-  if (player.position && ['GK', 'DEF', 'MID', 'FWD'].includes(player.position)) {
-    return player.position as 'GK' | 'DEF' | 'MID' | 'FWD';
+export function resolvePlayerFromDB(name: string): FootballPlayer | null {
+  if (!name) return null;
+  const key = norm(name);
+  const idx = getMasterIndex();
+  const exact = idx.get(key);
+  if (exact) return exact;
+  if (key.length >= 4) {
+    for (const p of FOOTBALL_PLAYERS_MASTER) {
+      const pn = norm(p.name);
+      if (pn.includes(key) || key.includes(pn)) return p;
+    }
   }
+  return null;
+}
 
-  const cleanName = normalizeArabicFootball(player.name);
-  const found = FOOTBALL_PLAYERS_MASTER.find(
-    (p) => normalizeArabicFootball(p.name) === cleanName || (p.aliases && p.aliases.some((a) => normalizeArabicFootball(a) === cleanName))
-  );
+/** Haystack of every known spelling of the player (normalized). */
+function nameHaystack(name: string, dbPlayer: FootballPlayer | null): string {
+  return [name, dbPlayer?.name || '', ...(dbPlayer?.aliases || [])].map(norm).join(' | ');
+}
 
-  if (found && found.position) {
-    return found.position;
-  }
+function matchesAny(haystack: string, list: string[]): boolean {
+  return list.some((n) => haystack.includes(norm(n)));
+}
 
-  // Heuristic fallbacks for well-known goalkeepers and defenders
-  if (/بوفون|كاسياس|نوير|كورتوا|أليسون|إيدرسون|دي خيا|بونو|العويس|المعيوف|تير شتيغن|دوناروما|نافاس|بارتيز|تشيك|لوريس|خان/.test(player.name)) {
-    return 'GK';
-  }
-  if (/مالديني|راموس|فان دايك|بويول|كانافارو|بيكي|سيلفا|كوليبالي|مارسيلو|ألفيس|أرنولد|روبرتسون|دياز|البليهي|هوساوي|حجازي|والكر|حكيمي/.test(player.name)) {
-    return 'DEF';
-  }
-  if (/زيدان|مودريتش|تشافي|إنييستا|كروس|دي بروين|كانتي|كاسيميرو|بوسكيتس|بيرلو|جيرارد|لامبارد|سافيتش|نيفيز|سالم|عطيف|بيغبا|رودري/.test(player.name)) {
-    return 'MID';
-  }
+// ---------------------------------------------------------------------------
+// Knowledge lists (heuristics for attributes the DB does not store)
+// ---------------------------------------------------------------------------
+const GK_NAMES = ['بوفون', 'كاسياس', 'نوير', 'كورتوا', 'أليسون', 'إيدرسون', 'دي خيا', 'ياسين بونو', 'العويس', 'المعيوف', 'تير شتيغن', 'دوناروما', 'نافاس', 'بارتيز', 'بيتر تشيك', 'لوريس', 'أوليفر كان', 'أوبلاك', 'إيميليانو مارتينيز', 'أونانا', 'رامسديل', 'سومر', 'مينيان', 'شيزني', 'ياشين', 'شمايكل', 'فان در سار', 'زوف', 'الحبسي', 'الدعيع', 'الشناوي', 'الحضري'];
+const DEF_NAMES = ['مالديني', 'راموس', 'فان دايك', 'بويول', 'كانافارو', 'بيكيه', 'تياغو سيلفا', 'كوليبالي', 'مارسيلو', 'ألفيس', 'أرنولد', 'روبرتسون', 'روبن دياز', 'البليهي', 'هوساوي', 'حجازي', 'والكر', 'حكيمي', 'نيستا', 'تيري', 'فيرديناند', 'بيبي', 'فاران', 'ماركينيوس', 'فيليب لام', 'روبرتو كارلوس', 'زانيتي', 'كافو', 'نيفيل', 'كيميش', 'ألابا', 'دافيز', 'ساليبا', 'تشيلليني', 'بونوتشي', 'كيليني', 'ستونز', 'غفارديول', 'ثيو هيرنانديز', 'ألبا', 'كارفاخال', 'روديغر', 'الشهراني', 'غريب', 'عبدالحميد'];
+const MID_NAMES = ['زيدان', 'مودريتش', 'تشافي', 'إنييستا', 'كروس', 'دي بروين', 'كانتي', 'كاسيميرو', 'بوسكيتس', 'بيرلو', 'جيرارد', 'لامبارد', 'سافيتش', 'نيفيز', 'سالم الدوسري', 'عطيف', 'بوغبا', 'رودري', 'فالفيردي', 'بيلينغهام', 'بيدري', 'غافي', 'شفاينشتايغر', 'سكولز', 'فييرا', 'كاكا', 'رونالدينيو', 'ريكيلمي', 'فيراتي', 'كوفاتشيتش', 'تونالي', 'باريلا', 'برونو فيرنانديز', 'أوديغارد', 'كيميتش', 'فرينكي دي يونغ', 'تشواميني', 'كامافينغا', 'غوندوغان', 'المالكي', 'محمد كنو'];
+const LEGENDS = ['ميسي', 'كريستيانو رونالدو', 'رونالدو نازاريو', 'زيدان', 'مارادونا', 'بيليه', 'رونالدينيو', 'كرويف', 'بيكنباور', 'مالديني', 'هنري', 'إنييستا', 'تشافي', 'مودريتش', 'بوفون', 'كاكا', 'بلاتيني', 'فان باستن', 'دي ستيفانو', 'بوشكاش', 'إيبوسيبيو', 'ياشين', 'كانافارو', 'راؤول', 'توتي', 'بيرلو', 'نوير', 'راموس', 'صلاح', 'ليفاندوفسكي', 'بنزيما', 'مبابي', 'هالاند', 'نيمار', 'سامي الجابر', 'ماجد عبدالله'];
 
+const AFRICA = ['مصر', 'المغرب', 'الجزائر', 'تونس', 'السنغال', 'نيجيريا', 'الكاميرون', 'غانا', 'ساحل العاج', 'كوت ديفوار', 'مالي', 'غينيا', 'الغابون', 'الجابون', 'جنوب أفريقيا', 'الكونغو', 'توغو', 'بوركينا فاسو', 'زامبيا', 'ليبيا', 'السودان', 'إثيوبيا', 'كينيا', 'أنغولا', 'الرأس الأخضر', 'بنين', 'زيمبابوي'];
+const SOUTH_AMERICA = ['البرازيل', 'الأرجنتين', 'الأوروغواي', 'أوروجواي', 'كولومبيا', 'تشيلي', 'الإكوادور', 'الباراغواي', 'باراجواي', 'بيرو', 'فنزويلا', 'بوليفيا'];
+const ASIA = ['السعودية', 'اليابان', 'كوريا', 'إيران', 'العراق', 'الإمارات', 'قطر', 'الصين', 'أستراليا', 'الأردن', 'سوريا', 'الكويت', 'عمان', 'البحرين', 'أوزبكستان', 'تايلاند', 'فيتنام', 'الهند', 'لبنان', 'فلسطين', 'اليمن', 'ماليزيا', 'إندونيسيا'];
+const NON_EURO_CLUBS = ['الهلال', 'النصر', 'الاتحاد', 'الأهلي', 'الشباب', 'الاتفاق', 'القادسية', 'التعاون', 'الفيحاء', 'ضمك', 'الرائد', 'الخليج', 'الفتح', 'الوحدة', 'الرياض', 'الأخدود', 'الفتح', 'السد', 'الدحيل', 'الريان', 'العربي', 'الغرافة', 'العين', 'شباب الأهلي', 'إنتر ميامي', 'لوس أنجلوس', 'نيويورك', 'تورونتو', 'شيكاغو', 'بوكا جونيورز', 'ريفر بليت', 'سانتوس', 'فلامنغو', 'بالميراس', 'ساو باولو', 'كورينثيانز', 'غريميو', 'نيولز', 'إنترناسيونال', 'فلومينينسي', 'بوتافوغو', 'أتلتيكو مينيرو', 'كروزيرو', 'فاسكو', 'غوانزو', 'شنغهاي', 'بكين', 'الزمالك', 'الوداد', 'الرجاء', 'الترجي', 'صن داونز', 'مازيمبي', 'أوراوا', 'كاشيما', 'فيسيل كوبي'];
+const ROSHN_CLUBS = ['الهلال', 'النصر', 'الاتحاد', 'الأهلي', 'الشباب', 'الاتفاق', 'القادسية', 'التعاون', 'الفيحاء', 'ضمك', 'الرائد', 'الخليج', 'الفتح', 'الوحدة', 'الرياض', 'الأخدود', 'الفيصلي', 'الحزم', 'العروبة', 'الخلود', 'النجمة'];
+
+const COND_LISTS: Record<string, string[]> = {
+  c_bald: ['زيدان', 'آريين روبن', 'كانتي', 'كومباني', 'ستام', 'بارتيز', 'هنري', 'بيبي', 'سكيرتل', 'كولاروف', 'رونالدو نازاريو', 'روبرتو كارلوس', 'غاتوزو', 'كولينا', 'شيلفي', 'ماركينيوس'],
+  c_afro: ['فيلايني', 'كوكوريا', 'ساني', 'مارسيلو', 'ديفيد لويز', 'فالديراما', 'كولوتشيني', 'غوندوزي', 'ويليان', 'بوغبا', 'ريكارد', 'رود خوليت', 'إنزو فيرنانديز'],
+  c_long_hair: ['مودريتش', 'إبراهيموفيتش', 'كافاني', 'بويول', 'كانيجيا', 'باتيستوتا', 'بيرلو', 'نيدفيد', 'غريزمان', 'هالاند', 'باجيو', 'بيكهام', 'فالديراما', 'رونالدينيو', 'سيرخيو راموس', 'تشيلافيرت', 'ماتيوس كونيا'],
+  c_beard: ['صلاح', 'بنزيما', 'ميسي', 'جيرو', 'أليسون', 'بيكيه', 'توران', 'دي روسي', 'راموس', 'كافاني', 'إبراهيموفيتش', 'برونو فيرنانديز', 'ليوناردو بونوتشي', 'كوكي', 'ماتيوس'],
+  c_dark_skin: ['كانتي', 'فينيسيوس', 'مبابي', 'كوليبالي', 'بوغبا', 'توريه', 'ماني', 'ديمبيلي', 'سيسوكو', 'ليروي ساني', 'كامافينغا', 'دروغبا', 'إيتو', 'رونالدينيو', 'بيليه', 'تيري هنري', 'تشواميني', 'ساكا', 'روديغر', 'ألابا', 'أوسيمين', 'ستيرلينغ', 'ميندي'],
+  c_handsome: ['بيكهام', 'جيرو', 'مالديني', 'كاكا', 'كريستيانو رونالدو', 'كانافارو', 'غريزمان', 'موراتا', 'توريس', 'إيكر كاسياس', 'إيكاردي', 'جوردان هندرسون', 'ماركيزيو', 'بيكيه'],
+  c_no_tattoos: ['كريستيانو رونالدو', 'صلاح', 'ماني', 'كانتي', 'كاسيميرو', 'بوسكيتس', 'إنييستا', 'تشافي', 'كروس', 'مودريتش', 'بنزيما', 'زيدان'],
+  c_tall_giant: ['هالاند', 'كورتوا', 'فان دايك', 'إبراهيموفيتش', 'بيكيه', 'بونو', 'نوير', 'دوناروما', 'ماتيتش', 'كراوتش', 'لوكاكو', 'فيلايني', 'ميلينكوفيتش', 'دجيكو', 'جيرو', 'دي ليخت', 'كونيه', 'ساليبا', 'تشيك'],
+  c_short_speed: ['ميسي', 'كانتي', 'إنسيني', 'فيراتي', 'مارادونا', 'كازورلا', 'جيوفينكو', 'مودريتش', 'إنييستا', 'تشافي', 'ديفيد سيلفا', 'أغويرو', 'ستيرلينغ', 'يامال', 'ريبيري', 'روماريو', 'سالم الدوسري'],
+  c_lefty: ['ميسي', 'روبن', 'دي ماريا', 'محرز', 'صلاح', 'مارادونا', 'بيل', 'برناردو سيلفا', 'خاميس', 'مارسيلو', 'روبرتو كارلوس', 'فالفيردي', 'أوديغارد', 'ساكا', 'روبرتسون', 'ديفيز', 'ألبا', 'يامال', 'فودين', 'دي بروين', 'رافينيا', 'بالمر'],
+  c_captain: ['راموس', 'ميسي', 'كريستيانو رونالدو', 'مالديني', 'جيرارد', 'توتي', 'بوفون', 'نوير', 'بويول', 'كومباني', 'هاري كين', 'تيري', 'فان دايك', 'مودريتش', 'كاسياس', 'زانيتي', 'سالم الدوسري', 'ياسر القحطاني', 'سامي الجابر', 'فيرديناند', 'فيليب لام', 'أوديغارد', 'برونو فيرنانديز'],
+  c_shirt_10: ['ميسي', 'بيليه', 'مارادونا', 'زيدان', 'مودريتش', 'توتي', 'نيمار', 'رونالدينيو', 'هازارد', 'مبابي', 'أوزيل', 'كاكا', 'ريفالدو', 'بلاتيني', 'ريكيلمي', 'روني', 'ديل بييرو', 'باجيو', 'موسيالا', 'سالم الدوسري', 'يامال'],
+  c_shirt_7: ['كريستيانو رونالدو', 'بيكهام', 'كانتونا', 'راؤول', 'سون هيونغ مين', 'ريبيري', 'فيغو', 'غريزمان', 'مبابي', 'شيفتشينكو', 'دي ماريا', 'ساكا', 'فينيسيوس', 'جيست', 'ديمبيلي'],
+  c_muslim: ['بنزيما', 'صلاح', 'كانتي', 'ماني', 'زيدان', 'أوزيل', 'بوغبا', 'حكيمي', 'محرز', 'ريبيري', 'توريه', 'ديمبيلي', 'زياش', 'ماتيب', 'روديغر', 'غوندوغان', 'أبيدال', 'كوليبالي', 'تشواميني', 'كامافينغا', 'مزراوي', 'سايس'],
+  c_naturalized: ['ديكو', 'بيبي', 'دييغو كوستا', 'تياغو موتا', 'كامورانيسي', 'جورجينيو', 'إيمرسون بالميري', 'لابورت', 'كلوزه', 'بودولسكي', 'ماركوس سينا', 'ليوناردو', 'رافينيا', 'أوليفر نوفيل'],
+  c_u23: ['يامال', 'غافي', 'بيدري', 'بيلينغهام', 'موسيالا', 'فيرتز', 'كوبارسي', 'إندريك', 'غارناتشو', 'ماينو', 'زاير إيمري', 'ديزيريه دوي', 'كامافينغا', 'غولر', 'نيكو ويليامز', 'باليستر'],
+  c_veteran_35: ['كريستيانو رونالدو', 'ميسي', 'مودريتش', 'بنزيما', 'ليفاندوفسكي', 'نوير', 'بوفون', 'إبراهيموفيتش', 'بيبي', 'داني ألفيس', 'راموس', 'دي ماريا', 'سواريز', 'جيرو', 'تياغو سيلفا', 'بوسكيتس', 'ألبا', 'مالديني', 'زانيتي', 'توتي', 'كاسياس', 'روجيه ميلا', 'بيرلو', 'كانافارو', 'زلاتان', 'ياسر القحطاني', 'سامي الجابر', 'ماجد عبدالله', 'دروغبا', 'إيتو', 'مولر', 'دجيكو', 'كازورلا'],
+  c_goals_150: ['ميسي', 'كريستيانو رونالدو', 'ليفاندوفسكي', 'بنزيما', 'سواريز', 'إبراهيموفيتش', 'هاري كين', 'أغويرو', 'هنري', 'روني', 'كافاني', 'هالاند', 'مبابي', 'صلاح', 'نيمار', 'فان بيرسي', 'إيتو', 'دروغبا', 'شيفتشينكو', 'راؤول', 'توتي', 'إنزاغي', 'دافيد فيا', 'كلوزه', 'مولر', 'غريزمان', 'لوكاكو', 'إيموبيلي', 'ميتروفيتش', 'حمدالله', 'رونالدو نازاريو', 'روماريو', 'باتيستوتا', 'بيليه', 'ماجد عبدالله', 'سامي الجابر', 'دجيكو', 'جيرو', 'أوباميانغ', 'ديل بييرو', 'فان نيستلروي', 'شيرر'],
+  c_world_cup_winner: ['ميسي', 'مبابي', 'كانتي', 'بوفون', 'إنييستا', 'زيدان', 'رونالدو نازاريو', 'ريفالدو', 'تشافي', 'راموس', 'نوير', 'كروس', 'فاران', 'لوريس', 'غريزمان', 'بوغبا', 'جيرو', 'دي ماريا', 'مارتينيز', 'كافو', 'روبرتو كارلوس', 'رونالدينيو', 'كانافارو', 'بيرلو', 'توتي', 'مولر', 'لام', 'بيكيه', 'بوسكيتس', 'كاسياس', 'دافيد فيا', 'ماسكيرانو'],
+};
+
+const POSITION_ARABIC: Record<string, string> = {
+  GK: 'حارس مرمى', DEF: 'مدافع', DEF_1: 'مدافع أول', DEF_2: 'مدافع ثانٍ', MID: 'لاعب وسط', FWD: 'مهاجم',
+};
+
+// ---------------------------------------------------------------------------
+// Criterion 2: Position fit
+// ---------------------------------------------------------------------------
+export function getPlayerNaturalPosition(
+  player: FootballPlayer | { name: string; position?: string }
+): NaturalPos {
+  const db = resolvePlayerFromDB(player.name);
+  if (db?.position) return db.position;
+  const hay = nameHaystack(player.name, null);
+  if (matchesAny(hay, GK_NAMES)) return 'GK';
+  if (matchesAny(hay, DEF_NAMES)) return 'DEF';
+  if (matchesAny(hay, MID_NAMES)) return 'MID';
   return 'FWD';
 }
 
-/**
- * Format position names in Arabic
- */
-const POSITION_ARABIC_NAMES: Record<string, string> = {
-  GK: 'حارس مرمى',
-  DEF: 'مدافع',
-  DEF_1: 'مدافع أول',
-  DEF_2: 'مدافع ثانٍ',
-  MID: 'خط وسط',
-  FWD: 'مهاجم',
-};
+function verifyPosition(name: string, db: FootballPlayer | null, slot: DraftPosition) {
+  const known = Boolean(db) || matchesAny(nameHaystack(name, null), [...GK_NAMES, ...DEF_NAMES, ...MID_NAMES]);
+  const natural = getPlayerNaturalPosition({ name });
+  const naturalName = POSITION_ARABIC[natural];
+  const slotGroup: NaturalPos = slot === 'DEF_1' || slot === 'DEF_2' ? 'DEF' : (slot as NaturalPos);
 
-/**
- * Pillar 2: Positional Accuracy Check
- */
-function verifyPlayerPosition(
-  player: FootballPlayer,
-  slot: DraftPosition
-): { isPositionValid: boolean; positionReason: string; naturalPosition: string } {
-  const naturalPos = getPlayerNaturalPosition(player);
-  const naturalName = POSITION_ARABIC_NAMES[naturalPos] || naturalPos;
-  const slotName = POSITION_ARABIC_NAMES[slot] || slot;
-
-  let isPositionValid = false;
-  let positionReason = '';
-
-  if (slot === 'GK') {
-    isPositionValid = naturalPos === 'GK';
-    positionReason = isPositionValid
-      ? `مركز سليم: ${player.name} حارس مرمى خبير ويعتمد عليه.`
-      : `كارثة تكتيكية: وضع ${player.name} في حراسة المرمى سيكلف الفريق كوارث، فهو لاعب ${naturalName}!`;
-  } else if (slot === 'DEF_1' || slot === 'DEF_2') {
-    isPositionValid = naturalPos === 'DEF';
-    positionReason = isPositionValid
-      ? `مركز سليم: ${player.name} صخرة دفاعية في مكانه الطبيعي.`
-      : `ثغرة دفاعية فادحة: إشراك ${player.name} في الخط الخلفي مجازفة انتحارية، مركزه الحقيقي ${naturalName}!`;
-  } else if (slot === 'MID') {
-    isPositionValid = naturalPos === 'MID';
-    positionReason = isPositionValid
-      ? `مركز سليم: ${player.name} مايسترو خط الوسط وقائد الإيقاع.`
-      : `خلل في التوزيع: وضع ${player.name} في خط الوسط يفقده بريقه، فهو في الأصل ${naturalName}!`;
-  } else if (slot === 'FWD') {
-    isPositionValid = naturalPos === 'FWD';
-    positionReason = isPositionValid
-      ? `مركز سليم: ${player.name} هداف فتاك ومرعب لحراس الخصم.`
-      : `عقم هجومي: وضع ${player.name} كرأس حربة قرار غير مفهوم لأنه لاعب ${naturalName}!`;
+  // Unknown outfield player: give benefit of the doubt everywhere except the GK slot
+  if (!known && slotGroup !== 'GK') {
+    return { isPositionValid: true, isOutfieldInGoal: false, naturalName: 'غير مسجل', reason: `✓ المركز مقبول مبدئياً: ${name} غير مسجل في قاعدة البيانات.` };
   }
 
-  return { isPositionValid, positionReason, naturalPosition: naturalName };
+  const ok = natural === slotGroup;
+  const isOutfieldInGoal = slotGroup === 'GK' && natural !== 'GK';
+  let reason: string;
+  if (ok) {
+    reason = {
+      GK: `✓ المركز صحيح: ${name} حارس مرمى حقيقي.`,
+      DEF: `✓ المركز صحيح: ${name} مدافع في مكانه الطبيعي.`,
+      MID: `✓ المركز صحيح: ${name} لاعب وسط ويضبط الإيقاع.`,
+      FWD: `✓ المركز صحيح: ${name} مهاجم يعرف طريق المرمى.`,
+    }[slotGroup];
+  } else if (isOutfieldInGoal) {
+    reason = `✗ كارثة تكتيكية: وضع لاعب ميدان (${name} - ${naturalName}) في مركز حراسة المرمى!`;
+  } else {
+    reason = `✗ المركز خاطئ: ${name} ${naturalName} بالأساس وليس ${POSITION_ARABIC[slot]}.`;
+  }
+  return { isPositionValid: ok, isOutfieldInGoal, naturalName, reason };
 }
 
-/**
- * Robust Local 3-Pillar Evaluation Engine
- */
-function generateLocalThreePillarEvaluations(
-  contestants: DraftContestant[]
-): SquadAIEvaluation[] {
-  return contestants.map((c) => {
-    const verifications: PlayerConditionVerification[] = [];
-    let validCondCount = 0;
-    let validPosCount = 0;
+// ---------------------------------------------------------------------------
+// Criterion 1: Condition adherence
+// ---------------------------------------------------------------------------
+function teammatesOf(star: string, db: FootballPlayer | null, name: string): boolean {
+  const starDb = resolvePlayerFromDB(star);
+  if (!starDb || !db || norm(db.name) === norm(starDb.name)) return false;
+  const starClubs = new Set(starDb.clubs.map(norm));
+  if (db.clubs.some((c) => starClubs.has(norm(c)))) return true;
+  return norm(db.nationality) === norm(starDb.nationality);
+}
 
-    DRAFT_SLOTS_ORDER.forEach((pos) => {
-      const player = c.picks[pos];
-      const cond = c.pickConditions ? c.pickConditions[pos] : null;
+function checkCondition(name: string, db: FootballPlayer | null, condition: DraftCondition | null): boolean | null {
+  if (!condition) return true;
+  const hay = nameHaystack(name, db);
+  const traits = (db?.traits || []).map(norm).join(' ');
+  const trophies = (db?.trophies || []).map(norm).join(' ');
+  const clubs = (db?.clubs || []).map(norm);
+  const nat = norm(db?.nationality || '');
+  const list = COND_LISTS[condition.id] || [];
+  const inList = matchesAny(hay, list);
+  const hasTrait = (...t: string[]) => t.some((x) => traits.includes(norm(x)));
+  const inNat = (arr: string[]) => Boolean(nat) && arr.some((c) => nat.includes(norm(c)) || norm(c).includes(nat));
+  const clubIn = (arr: string[]) => clubs.some((c) => arr.some((x) => c === norm(x) || c.includes(norm(x))));
 
-      if (!player) {
-        verifications.push({
-          position: pos,
-          playerName: 'فارغ',
-          playerPhoto: '',
-          conditionTitle: cond?.title || 'شرط الجولة',
-          isValid: false,
-          reason: 'لم يتم اختيار أي لاعب في هذا المركز!',
-          isPositionValid: false,
-          positionReason: 'المركز فارغ تماماً!',
-          naturalPosition: '-',
-        });
-        return;
-      }
-
-      // Pillar 1: Condition Adherence
-      const condCheck = verifyPlayerConditionLocal(player, cond);
-      if (condCheck.isValid) validCondCount++;
-
-      // Pillar 2: Positional Accuracy
-      const posCheck = verifyPlayerPosition(player, pos);
-      if (posCheck.isPositionValid) validPosCount++;
-
-      verifications.push({
-        position: pos,
-        playerName: player.name,
-        playerPhoto: player.photo || '',
-        conditionTitle: cond?.title || 'بدون شرط',
-        isValid: condCheck.isValid,
-        reason: condCheck.reason,
-        isPositionValid: posCheck.isPositionValid,
-        positionReason: posCheck.positionReason,
-        naturalPosition: posCheck.naturalPosition,
-      });
-    });
-
-    // Pillar 3: Tactical Strength & Percentage Score
-    const gk = c.picks.GK;
-    const def1 = c.picks.DEF_1;
-    const def2 = c.picks.DEF_2;
-    const mid = c.picks.MID;
-    const fwd = c.picks.FWD;
-
-    const gkPosValid = gk ? verifyPlayerPosition(gk, 'GK').isPositionValid : false;
-    const def1PosValid = def1 ? verifyPlayerPosition(def1, 'DEF_1').isPositionValid : false;
-    const def2PosValid = def2 ? verifyPlayerPosition(def2, 'DEF_2').isPositionValid : false;
-    const midPosValid = mid ? verifyPlayerPosition(mid, 'MID').isPositionValid : false;
-    const fwdPosValid = fwd ? verifyPlayerPosition(fwd, 'FWD').isPositionValid : false;
-
-    // Goalkeeping rating (80-99 if valid GK, 15-35 if wrong position or empty)
-    let gkScore = gk ? (gkPosValid ? Math.floor(82 + Math.random() * 16) : 25) : 10;
-    
-    // Defense rating
-    let defBase = (def1 ? (def1PosValid ? 42 : 15) : 5) + (def2 ? (def2PosValid ? 42 : 15) : 5);
-    let defScore = Math.min(99, Math.max(15, defBase + Math.floor(Math.random() * 12)));
-
-    // Midfield rating
-    let midScore = mid ? (midPosValid ? Math.floor(82 + Math.random() * 16) : 30) : 10;
-
-    // Forward rating
-    let fwdScore = fwd ? (fwdPosValid ? Math.floor(84 + Math.random() * 15) : 30) : 10;
-
-    // Synergy: Reward matching clubs or valid positions
-    let synergyScore = 50 + validPosCount * 8 + (validCondCount >= 4 ? 10 : 0);
-    synergyScore = Math.min(99, Math.max(30, synergyScore));
-
-    // Boost for trophies & pedigree
-    if (gk?.trophies?.length && gkPosValid) gkScore = Math.min(99, gkScore + 4);
-    if ((def1?.trophies?.length || def2?.trophies?.length) && (def1PosValid || def2PosValid)) defScore = Math.min(99, defScore + 4);
-    if (mid?.trophies?.length && midPosValid) midScore = Math.min(99, midScore + 4);
-    if (fwd?.trophies?.length && fwdPosValid) fwdScore = Math.min(99, fwdScore + 4);
-
-    const overallPercentage = Math.round(
-      gkScore * 0.18 + defScore * 0.26 + midScore * 0.26 + fwdScore * 0.22 + synergyScore * 0.08
-    );
-
-    const critiqueTitles = [
-      'توليفة أسطورية بتناغم استثنائي بين الخطوط',
-      'هجوم كاسح ووسط ممتع مع بعض التحفظ الدفاعي',
-      'منظومة صلبة بروح إيطالية لا تخترق',
-      'فريق استعراضي مليء بالسحر والمهارة الفردية',
-      'تكتيك عصري بضغط عالٍ وسرعات خارقة في المرتدات',
-      'قوة بدنية جبارة وهيمنة على الكرات الهوائية',
-      'فريق مليء بالثغرات بسبب توظيف عشوائي للمراكز'
-    ];
-    const critiqueTitle = validPosCount <= 2
-      ? 'فريق يعاني من تخبط تكتيكي وتوظيف خاطئ للمراكز'
-      : critiqueTitles[Math.floor(Math.random() * (critiqueTitles.length - 1))];
-
-    const strengths: string[] = [];
-    const weaknesses: string[] = [];
-
-    if (fwd && fwdPosValid) strengths.push(`حسم مرعب أمام المرمى بفضل ${fwd.name}`);
-    if (mid && midPosValid) strengths.push(`تحكم وإيقاع سلس في خط الوسط بقيادة ${mid.name}`);
-    if ((def1 || def2) && (def1PosValid || def2PosValid)) {
-      strengths.push(`صلابة دفاعية بتواجد ${[def1?.name, def2?.name].filter(Boolean).join(' و')}`);
+  switch (condition.id) {
+    case 'c_bald': return inList || hasTrait('أصلع');
+    case 'c_afro': return inList || hasTrait('كدش', 'أفرو', 'افرو');
+    case 'c_long_hair': return inList || hasTrait('شعر طويل');
+    case 'c_beard': return inList || hasTrait('لحية');
+    case 'c_dark_skin': return inList || hasTrait('أسمر', 'سمراء') || inNat(AFRICA.filter((c) => !['مصر', 'المغرب', 'الجزائر', 'تونس', 'ليبيا'].includes(c)));
+    case 'c_handsome': return inList || hasTrait('وسيم');
+    case 'c_no_tattoos': return inList || hasTrait('بدون وشم');
+    case 'c_tall_giant': return inList || hasTrait('عملاق', 'طويل القامة');
+    case 'c_short_speed': return inList || hasTrait('قصير');
+    case 'c_lefty': return inList || hasTrait('أعسر', 'أشول', 'يسرى');
+    case 'c_captain': return inList || hasTrait('قائد', 'كابتن');
+    case 'c_shirt_10': return inList || hasTrait('10');
+    case 'c_shirt_7': return inList || hasTrait('7');
+    case 'c_muslim': return inList || hasTrait('مسلم') || inNat([...AFRICA.slice(0, 5), 'السعودية', 'الإمارات', 'قطر', 'الكويت', 'عمان', 'البحرين', 'العراق', 'الأردن', 'سوريا', 'فلسطين', 'اليمن', 'إيران', 'السنغال', 'مالي', 'غينيا', 'تركيا', 'البوسنة', 'ألبانيا']);
+    case 'c_naturalized': return inList || hasTrait('مجنس');
+    case 'c_africa': return inNat(AFRICA) || (!db && inList);
+    case 'c_south_america': return inNat(SOUTH_AMERICA);
+    case 'c_asia': return inNat(ASIA);
+    case 'c_played_messi_ronaldo': return teammatesOf('ميسي', db, name) || teammatesOf('كريستيانو رونالدو', db, name);
+    case 'c_two_continents': {
+      if (!clubs.length) return false;
+      const nonEuro = clubIn(NON_EURO_CLUBS);
+      const euro = clubs.some((c) => !NON_EURO_CLUBS.some((x) => c === norm(x) || c.includes(norm(x))));
+      return nonEuro && euro;
     }
-    if (gk && gkPosValid) strengths.push(`أمان مطلق وردات فعل حاسمة مع الحارس ${gk.name}`);
+    case 'c_five_clubs': return new Set(clubs).size >= 5;
+    case 'c_roshn': return clubIn(ROSHN_CLUBS) || inList || matchesAny(hay, ['كريستيانو رونالدو', 'بنزيما', 'نيمار', 'كانتي', 'محرز', 'فيرمينو', 'سافيتش', 'نيفيز', 'ميتروفيتش', 'بونو', 'ساديو ماني', 'إيفان توني', 'هيرنانديز']);
+    case 'c_u23': return inList || hasTrait('شاب', 'موهبة');
+    case 'c_veteran_35': return inList || hasTrait('مخضرم', 'أسطورة');
+    case 'c_goals_150': return inList || (db?.position === 'FWD' && hasTrait('هداف') && (db?.trophies?.length || 0) >= 3);
+    case 'c_world_cup_winner': return trophies.includes(norm('كأس العالم')) || inList;
+    default: return null; // unknown condition type → cannot verify automatically
+  }
+}
 
-    if (!gk || !gkPosValid) weaknesses.push(gk ? `كارثة الحراسة: ${gk.name} ليس حارساً مرمى وسيتلقى أهدافاً سهلة` : 'غياب الحارس الأساسي تماماً');
-    if (!def1PosValid || !def2PosValid) weaknesses.push('ثغرات في العمق الدفاعي بسبب أخطاء تمركز أو غياب المدافعين الصريحين');
-    if (!midPosValid) weaknesses.push('صعوبة في الربط بين الخطوط بسبب مركز الوسط غير السليم');
-    if (!fwdPosValid) weaknesses.push('غياب المهاجم الهداف يعطل الفاعلية الهجومية');
-    if (weaknesses.length === 0) weaknesses.push('اندفاع هجومي مبالغ فيه قد يترك مساحات في المرتدات');
+function verifyCondition(name: string, db: FootballPlayer | null, condition: DraftCondition | null) {
+  const result = checkCondition(name, db, condition);
+  const title = condition?.title || 'شرط الجولة';
+  if (!condition) return { isValid: true, reason: '✓ لا يوجد شرط محدد لهذا المركز.' };
+  if (result === null) return { isValid: true, reason: `✓ تم قبول ${name} مبدئياً لشرط [${title}] (تعذّر التحقق الآلي).` };
+  return result
+    ? { isValid: true, reason: `✓ ${name} حقق شرط [${title}] بنجاح.` }
+    : { isValid: false, reason: `✗ ${name} لم يحقق شرط [${title}].` };
+}
 
-    const tacticalSummary = `تشكيلة ${c.name} حققت ${validCondCount}/5 من شروط الجولة و ${validPosCount}/5 من المراكز السليمة. القوة التكتيكية الإجمالية وصلت إلى ${overallPercentage}%.`;
+// ---------------------------------------------------------------------------
+// Criterion 4: Pundit critique
+// ---------------------------------------------------------------------------
+function buildCritique(
+  r: { gk: number; defense: number; midfield: number; attack: number },
+  gkBlunder: boolean,
+  validCond: number
+): { title: string; summary: string } {
+  const parts: string[] = [];
+  if (gkBlunder) parts.push('الحارس لاعب ميدان! المرمى مفتوح مثل باب البقالة، والخصم بيسجل من نص الملعب.');
+  else if (r.gk >= 85) parts.push('حارس مرعب يقفل المرمى بالضبة والمفتاح.');
 
-    const slotsAnalysis: Record<string, {
-      playerName: string;
-      conditionTitle: string;
-      isConditionMet: boolean;
-      conditionReason: string;
-      isPositionValid: boolean;
-      positionReason: string;
-    }> = {};
+  if (r.defense < 55) parts.push('دفاع شوارع ومخترق، والاعتماد بالكامل على مهارات الهجوم الفردية.');
+  else if (r.defense >= 85) parts.push('خط دفاع حديدي ما يعدّي منه حتى الهواء.');
 
-    DRAFT_SLOTS_ORDER.forEach((pos) => {
-      const v = verifications.find((item) => item.position === pos);
-      if (v) {
-        slotsAnalysis[pos] = {
-          playerName: v.playerName,
-          conditionTitle: v.conditionTitle,
-          isConditionMet: v.isValid,
-          conditionReason: v.reason,
-          isPositionValid: Boolean(v.isPositionValid),
-          positionReason: v.positionReason || '',
-        };
-      }
+  if (r.midfield >= 85) parts.push('خط وسط أسطوري يفرض سيطرته التامة على ريتم المباراة.');
+  else if (r.midfield < 55) parts.push('الوسط مقطوع، والكرة تطير من الدفاع للهجوم بدون تذكرة عبور.');
+
+  if (r.attack >= 85) parts.push('هجوم فتاك يرعب أي دفاع في العالم.');
+  else if (r.attack < 55) parts.push('الهجوم عقيم، ولو لعبوا للصبح ما سجلوا.');
+
+  const lines = [r.gk, r.defense, r.midfield, r.attack];
+  const balanced = Math.max(...lines) - Math.min(...lines) <= 15 && Math.min(...lines) >= 65;
+  if (balanced || parts.length === 0) parts.push('تشكيلة متوازنة تكتيكياً وقادرة على حسم المباريات في اللحظات الحاسمة.');
+
+  if (validCond <= 2) parts.push('لكن الشروط؟ الواضح إن المدرب ما قرأ ورقة التعليمات أصلاً.');
+  else if (validCond === 5) parts.push('والتزام كامل بالشروط الخمسة — شغل محترفين.');
+
+  let title = 'تشكيلة متوازنة بطموح البطولة';
+  if (gkBlunder) title = 'مغامرة انتحارية بدون حارس حقيقي';
+  else if (r.defense < 55 && r.attack >= 80) title = 'هجوم ناري ودفاع يغرق في شبر موية';
+  else if (r.midfield >= 85) title = 'مايسترو في الوسط وسيطرة كاملة';
+  else if (r.defense >= 85 && r.attack < 60) title = 'باص مركون أمام المرمى';
+  else if (validCond <= 2) title = 'فريق قوي على الورق لكنه خالف الشروط';
+
+  return { title, summary: parts.join(' ') };
+}
+
+// ---------------------------------------------------------------------------
+// Squad evaluation (criteria 1–4)
+// ---------------------------------------------------------------------------
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v)));
+
+function lineRating(entry: SlotEntry | null): number {
+  if (!entry) return 10;
+  if (!entry.pos.isPositionValid) return entry.pos.isOutfieldInGoal ? 20 : 40;
+  const trophies = Math.min(3, entry.db?.trophies?.length || 0);
+  return clamp(70 + trophies * 4 + (entry.cond.isValid ? 6 : 0) + (entry.isLegend ? 7 : 0), 0, 99);
+}
+
+interface SlotEntry {
+  name: string;
+  photo: string;
+  db: FootballPlayer | null;
+  condition: DraftCondition | null;
+  cond: { isValid: boolean; reason: string };
+  pos: ReturnType<typeof verifyPosition>;
+  isLegend: boolean;
+}
+
+function evaluateContestant(c: DraftContestant): SquadAIEvaluation {
+  const entries: Partial<Record<DraftPosition, SlotEntry | null>> = {};
+  const verifications: PlayerConditionVerification[] = [];
+  let validCond = 0;
+  let validPos = 0;
+  let empty = 0;
+  let gkBlunder = false;
+  let legends = 0;
+
+  DRAFT_SLOTS_ORDER.forEach((slot) => {
+    const pick = c.picks?.[slot];
+    const condition = c.pickConditions?.[slot] || null;
+    const name = (pick?.name || '').trim();
+
+    if (!name || name === 'فارغ' || name === 'لم يحدد') {
+      empty++;
+      entries[slot] = null;
+      verifications.push({
+        position: slot, playerName: 'فارغ', playerPhoto: '', conditionTitle: condition?.title || 'شرط الجولة',
+        isValid: false, reason: '✗ لم يتم اختيار أي لاعب في هذا المركز!',
+        isPositionValid: false, positionReason: '✗ المركز فارغ تماماً!', naturalPosition: '-',
+      });
+      if (slot === 'GK') gkBlunder = true;
+      return;
+    }
+
+    const db = resolvePlayerFromDB(name);
+    const displayName = db?.name || name;
+    const cond = verifyCondition(displayName, db, condition);
+    const pos = verifyPosition(displayName, db, slot);
+    const isLegend = matchesAny(nameHaystack(displayName, db), LEGENDS);
+    if (cond.isValid) validCond++;
+    if (pos.isPositionValid) validPos++;
+    if (pos.isOutfieldInGoal) gkBlunder = true;
+    if (isLegend) legends++;
+
+    entries[slot] = { name: displayName, photo: pick?.photo || db?.photo || '', db, condition, cond, pos, isLegend };
+    verifications.push({
+      position: slot, playerName: displayName, playerPhoto: pick?.photo || db?.photo || '',
+      conditionTitle: condition?.title || 'بدون شرط', isValid: cond.isValid, reason: cond.reason,
+      isPositionValid: pos.isPositionValid, positionReason: pos.reason, naturalPosition: pos.naturalName,
     });
+  });
 
-    return {
-      playerId: c.id,
-      playerName: c.name,
-      selectedClub: c.selectedClub,
-      teamLogo: c.selectedClub?.badgeUrl || '',
-      validConditionsCount: validCondCount,
-      validPositionsCount: validPosCount,
-      totalValidCount: validCondCount + validPosCount,
-      conditionVerifications: verifications,
-      slotsAnalysis,
-      ratings: {
-        gk: gkScore,
-        defense: defScore,
-        midfield: midScore,
-        attack: fwdScore,
-        synergy: synergyScore,
-      },
-      overallPercentage,
-      critiqueTitle,
-      critiqueSummary: tacticalSummary,
-      detailedBreakdown: {
-        strengths: strengths.slice(0, 3),
-        weaknesses: weaknesses.slice(0, 2),
-        tacticalSummary,
-      },
+  // Criterion 3: Strength % (spec formula)
+  const outfieldInGoal = Boolean(entries.GK?.pos.isOutfieldInGoal);
+  let overall = 50 + validCond * 8 + validPos * 2;
+  if (outfieldInGoal) overall -= 15;
+  overall += Math.min(3, legends);
+  overall -= empty * 5; // missing players weaken the squad
+  const overallPercentage = clamp(overall, 30, 99);
+
+  const ratings = {
+    gk: lineRating(entries.GK || null),
+    defense: Math.round((lineRating(entries.DEF_1 || null) + lineRating(entries.DEF_2 || null)) / 2),
+    midfield: lineRating(entries.MID || null),
+    attack: lineRating(entries.FWD || null),
+    synergy: clamp(40 + validPos * 8 + validCond * 4, 30, 99),
+  };
+
+  const critique = buildCritique(ratings, gkBlunder, validCond);
+
+  const strengths: string[] = [];
+  const weaknesses: string[] = [];
+  if (entries.FWD?.pos.isPositionValid) strengths.push(`حسم أمام المرمى بفضل ${entries.FWD.name}`);
+  if (entries.MID?.pos.isPositionValid) strengths.push(`تحكم في الوسط بقيادة ${entries.MID.name}`);
+  if (entries.DEF_1?.pos.isPositionValid && entries.DEF_2?.pos.isPositionValid) strengths.push(`ثنائي دفاعي صلب: ${entries.DEF_1.name} و${entries.DEF_2.name}`);
+  if (entries.GK?.pos.isPositionValid) strengths.push(`أمان في المرمى مع ${entries.GK.name}`);
+  if (gkBlunder) weaknesses.push(entries.GK ? `${entries.GK.name} ليس حارس مرمى` : 'لا يوجد حارس مرمى');
+  verifications.filter((v) => !v.isValid && v.playerName !== 'فارغ').forEach((v) => weaknesses.push(v.reason));
+
+  const slotsAnalysis: SquadAIEvaluation['slotsAnalysis'] = {};
+  verifications.forEach((v) => {
+    slotsAnalysis![v.position] = {
+      playerName: v.playerName, conditionTitle: v.conditionTitle, isConditionMet: v.isValid,
+      conditionReason: v.reason, isPositionValid: Boolean(v.isPositionValid), positionReason: v.positionReason || '',
     };
   });
+
+  return {
+    playerId: c.id,
+    playerName: c.name,
+    selectedClub: c.selectedClub || null,
+    teamLogo: c.selectedClub?.badgeUrl || '',
+    validConditionsCount: validCond,
+    validPositionsCount: validPos,
+    totalValidCount: validCond + validPos,
+    conditionVerifications: verifications,
+    slotsAnalysis,
+    ratings,
+    overallPercentage,
+    critiqueTitle: critique.title,
+    critiqueSummary: critique.summary,
+    detailedBreakdown: {
+      strengths: strengths.slice(0, 3),
+      weaknesses: weaknesses.slice(0, 4),
+      tacticalSummary: critique.summary,
+    },
+  };
 }
 
-/**
- * Local condition verifier with EXPLICIT failure explanations
- */
-function verifyPlayerConditionLocal(
-  player: FootballPlayer,
-  condition: DraftCondition | null
-): { isValid: boolean; reason: string } {
-  if (!condition) {
-    return {
-      isValid: true,
-      reason: 'تم قبول الاختيار بنجاح (بدون شرط محدد).',
+// ---------------------------------------------------------------------------
+// Squad → contestant merge (zero-loss)
+// ---------------------------------------------------------------------------
+const EMPTY_PICKS = (): Record<DraftPosition, FootballPlayer | null> => ({ FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null });
+const EMPTY_CONDS = (): Record<DraftPosition, DraftCondition | null> => ({ FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null });
+
+function findCondition(id?: string, title?: string): DraftCondition | null {
+  if (!id && !title) return null;
+  return (
+    DRAFT_CONDITIONS_BANK.find((c) => (id && c.id === id) || (title && c.title === title)) ||
+    { id: id || 'c_custom', title: title || 'شرط الجولة', rulePrompt: title || '' } as DraftCondition
+  );
+}
+
+export function mergeContestantsWithSquads(
+  contestants: DraftContestant[],
+  squads: Record<string, PlayerSquad> = {}
+): DraftContestant[] {
+  const pool = new Map<string, DraftContestant>();
+  contestants.forEach((c) => pool.set(c.id, { ...c, picks: { ...EMPTY_PICKS(), ...(c.picks || {}) }, pickConditions: { ...EMPTY_CONDS(), ...(c.pickConditions || {}) } }));
+
+  Object.entries(squads || {}).forEach(([id, sq]) => {
+    if (!sq) return;
+    const base = pool.get(id) || {
+      id, name: sq.playerName || 'متسابق', isReady: true,
+      selectedClub: sq.selectedClub || (sq.teamLogo ? { id: 'club', name: 'النادي', league: '', country: '', badgeUrl: sq.teamLogo } as any : null),
+      picks: EMPTY_PICKS(), pickConditions: EMPTY_CONDS(),
     };
-  }
+    DRAFT_SLOTS_ORDER.forEach((slot) => {
+      const s = sq.slots?.[slot];
+      if (!s?.playerName) return;
+      if (!base.picks[slot]) {
+        base.picks[slot] = { id: `squad_${slot}_${id}`, name: s.playerName, photo: s.playerPhoto, aliases: [], nationality: '', nationalityCode: '', clubs: [], currentClub: '', position: 'FWD' } as FootballPlayer;
+      }
+      if (!base.pickConditions![slot]) base.pickConditions![slot] = findCondition(s.conditionId, s.conditionTitle);
+    });
+    if (!base.selectedClub && sq.selectedClub) base.selectedClub = sq.selectedClub;
+    pool.set(id, base);
+  });
 
-  const pName = player.name.toLowerCase();
-  const cId = condition.id;
-  const traits = (player.traits || []).join(' ').toLowerCase();
-  const trophies = (player.trophies || []).join(' ').toLowerCase();
-  const clubs = (player.clubs || []).join(' ').toLowerCase();
-
-  let isValid = true;
-  let reason = `${player.name} حقق شرط: [${condition.title}] بنجاح`;
-
-  switch (cId) {
-    case 'c_bald':
-      isValid = /زيدان|روبين|كانتي|كومباني|ستام|بارتيز|هنري|بيبي|سكيرتل|كولاردوف|شيلفي/.test(pName) || traits.includes('أصلع');
-      reason = isValid ? `${player.name} أصلع بالكامل أو حليق الرأس` : `خطأ: ${player.name} لم يحقق شرط [لاعب أصلع]`;
-      break;
-
-    case 'c_afro':
-      isValid = /فيلاني|كوكوريلا|ساني|مارسيلو|لويز|فلاح|غوندوزي|ويليان|فالديراما|كولوتشيني/.test(pName) || traits.includes('كدش') || traits.includes('أفروا');
-      reason = isValid ? `${player.name} يمتلك شعر كدش / أفروا كثيف` : `خطأ: ${player.name} لم يحقق شرط [شعر كدش أو أفروا]`;
-      break;
-
-    case 'c_long_hair':
-      isValid = /مودريتش|إبراهيموفيتش|كافاني|بويول|كانيجيا|باتيستوتا|راموس|بيرلو|نيدفيد|غريزمان|هالاند/.test(pName) || traits.includes('طويل');
-      reason = isValid ? `${player.name} معروف بشعره الطويل المربوط أو المسدول` : `خطأ: ${player.name} شعره قصير ولم يحقق شرط [شعر طويل]`;
-      break;
-
-    case 'c_beard':
-      isValid = /صلاح|بنزيما|ميسي|جيرو|أليسون|بيكيه|توران|دي روسي|راموس|كافاني/.test(pName) || traits.includes('لحية');
-      reason = isValid ? `${player.name} يمتلك لحية واضحة وكثيفة` : `خطأ: ${player.name} حليق اللحية ولم يحقق شرط [يمتلك لحية]`;
-      break;
-
-    case 'c_dark_skin':
-      isValid = /كانتي|فينيسيوس|مبابي|كوليبالي|بوغبا|توريه|ماني|ديمبيلي|سيسوكو|ساني|كامافينغا/.test(pName) || traits.includes('أسمر');
-      reason = isValid ? `${player.name} من ذوي البشرة السمراء` : `خطأ: ${player.name} لا تنطبق عليه سمات [بشرة سمراء]`;
-      break;
-
-    case 'c_handsome':
-      isValid = /بيكهام|جيرو|مالديني|كاكا|رونالدو|كانافارو|غريزمان|موراتا|توريس/.test(pName) || traits.includes('وسيم');
-      reason = isValid ? `${player.name} مشهور بوسامته وجاذبيته الإعلامية` : `خطأ: ${player.name} لم يصنف ضمن [وسماء الملاعب]`;
-      break;
-
-    case 'c_no_tattoos':
-      isValid = /رونالدو|صلاح|ماني|كانتي|كاسيميرو|بوسكيتس|إنييستا|تشافي/.test(pName) || traits.includes('بدون وشم');
-      reason = isValid ? `${player.name} معروف بعدم رسم أي وشم على جسده` : `خطأ: ${player.name} يمتلك وشوماً على جسده`;
-      break;
-
-    case 'c_tall_giant':
-      isValid = /هالاند|كورتوا|فان دايك|إبراهيموفيتش|بيكيه|بونو|نوير|دوناروما|ماتيغ/.test(pName) || traits.includes('طويل') || traits.includes('عملاق');
-      reason = isValid ? `${player.name} طوله يتجاوز 190 سم` : `خطأ: ${player.name} طوله أقل من 190 سم ولم يحقق شرط [العملاق]`;
-      break;
-
-    case 'c_short_speed':
-      isValid = /ميسي|كانتي|إنسيني|فيراتي|مارادونا|كازورلا|جيوفينكو|مودريتش/.test(pName) || traits.includes('قصير');
-      reason = isValid ? `${player.name} طوله أقل من 172 سم` : `خطأ: ${player.name} طوله يزيد عن 172 سم ولم يحقق شرط [قصير القامة]`;
-      break;
-
-    case 'c_lefty':
-      isValid = /ميسي|روبين|ديماريا|محرز|صلاح|مالديني|مارادونا|بيل|سيلفا|خاميس|كاسياس/.test(pName) || traits.includes('أعسر') || traits.includes('أشول');
-      reason = isValid ? `${player.name} يعتمد كلياً على قدمه اليسرى` : `خطأ: ${player.name} يلعب بقدمه اليمنى وليس أشول`;
-      break;
-
-    case 'c_captain':
-      isValid = /راموس|ميسي|رونالدو|مالديني|جيرارد|توتي|بوفون|نوير|بويول|كومباني|كين/.test(pName) || traits.includes('قائد') || traits.includes('كابتن');
-      reason = isValid ? `${player.name} ارتدى شارة القيادة لفريقه أو منتخبه` : `خطأ: ${player.name} لم يحمل شارة القيادة بصفة مستمرة`;
-      break;
-
-    case 'c_shirt_10':
-      isValid = /ميسي|بيليه|مارادونا|زيدان|مودريتش|توتي|نيمار|رونالدينيو|هازارد|مبابي|أوزيل/.test(pName) || traits.includes('10');
-      reason = isValid ? `${player.name} ارتدى القميص رقم 10 الأسطوري` : `خطأ: ${player.name} لم يشتهر بارتداء الرقم 10`;
-      break;
-
-    case 'c_shirt_7':
-      isValid = /رونالدو|بيكهام|كانتونا|راؤول|سون|ريبيري|فيغو|غريزمان|مبابي|كانيدو/.test(pName) || traits.includes('7');
-      reason = isValid ? `${player.name} ارتدى القميص رقم 7 في مسيرته` : `خطأ: ${player.name} لم يشتهر بارتداء الرقم 7`;
-      break;
-
-    case 'c_muslim':
-      isValid = /بنزيما|صلاح|كانتي|ماني|زيدان|أوزيل|بوغبا|حكيمي|محرز|ريبيري|توريه|ديمبيلي/.test(pName) || traits.includes('مسلم');
-      reason = isValid ? `${player.name} مسلم الديانة رسمياً` : `خطأ: ${player.name} ديانته ليست مسلمة`;
-      break;
-
-    case 'c_roshn':
-      isValid = clubs.includes('هلال') || clubs.includes('نصر') || clubs.includes('اتحاد') || clubs.includes('أهلي') || clubs.includes('شباب') || clubs.includes('اتفاق') || clubs.includes('قادسية') || /رونالدو|بنزيما|نيمار|كانتي|سالم|البليهي|بونو|محرز|فيرمينو|سافيتش|نيفيز|ميتروفيتش/.test(pName);
-      reason = isValid ? `${player.name} مثل أحد أندية دوري روشن السعودي` : `خطأ: ${player.name} لم يسبق له اللعب في الدوري السعودي للمحترفين`;
-      break;
-
-    case 'c_world_cup_winner':
-      isValid = trophies.includes('كأس العالم') || /ميسي|مبابي|كانتي|بوفون|إنييستا|زيدان|رونالدو|ريفالدو|تشافي|راموس|نوير|كروس|فاران|لوريس/.test(pName);
-      reason = isValid ? `${player.name} توج ببطولة كأس العالم` : `خطأ: ${player.name} لم يتوج بلقب كأس العالم مع منتخب بلاده`;
-      break;
-
-    default:
-      isValid = true;
-      reason = `${player.name} مطابق لشرط: [${condition.title}]`;
-  }
-
-  return { isValid, reason };
+  return Array.from(pool.values());
 }
 
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 /**
- * Grand Final Scoring & Winner Determination
- * Rule 1: Highest number of valid conditions and positions wins first.
- * Rule 2 (Tie-break): Highest overall strength percentage wins.
+ * Synchronous, never-throwing evaluation of every squad.
+ * Pass both the live contestants list and any persisted squads; they are merged
+ * so no contestant is ever dropped.
  */
-function buildVerdictResult(
-  evaluations: SquadAIEvaluation[],
-  contestants: DraftContestant[]
+export function evaluateAllSquadsLocally(
+  contestants: DraftContestant[],
+  squads: Record<string, PlayerSquad> = {}
 ): DraftVerdictResult {
+  const merged = mergeContestantsWithSquads(contestants || [], squads || {});
+  const evaluations: SquadAIEvaluation[] = [];
+  merged.forEach((c) => {
+    try {
+      evaluations.push(evaluateContestant(c));
+    } catch (err) {
+      console.error('[Tactical Judge] Failed to evaluate', c?.name, err);
+    }
+  });
+  return buildVerdictResult(evaluations);
+}
+
+/** Backwards-compatible async wrapper (no network calls). */
+export async function evaluateDraftSquadsWithAI(
+  contestants: DraftContestant[],
+  _usedConditions?: DraftCondition[]
+): Promise<DraftVerdictResult> {
+  return evaluateAllSquadsLocally(contestants);
+}
+
+/** Compact per-contestant results map (spec-shaped). */
+export function toSquadResultsMap(verdict: DraftVerdictResult): Record<string, SquadEvaluationResult> {
+  const out: Record<string, SquadEvaluationResult> = {};
+  verdict.evaluations.forEach((e) => {
+    out[e.playerId] = {
+      playerId: e.playerId, playerName: e.playerName, teamLogo: e.teamLogo || '',
+      validConditionsCount: e.validConditionsCount, validPositionsCount: e.validPositionsCount,
+      overallPercentage: e.overallPercentage, slotsAnalysis: e.slotsAnalysis || {}, critiqueSummary: e.critiqueSummary || '',
+    };
+  });
+  return out;
+}
+
+function buildVerdictResult(evaluations: SquadAIEvaluation[]): DraftVerdictResult {
   if (evaluations.length === 0) {
     return {
-      evaluations: [],
-      winnerId: '',
-      winnerName: '',
-      isTie: false,
-      tiedContestantIds: [],
-      maxConditionsMet: 0,
-      verdictBanner: 'لا يوجد متسابقون لتقييمهم',
+      evaluations: [], winnerId: '', winnerName: '', isTie: false, tiedContestantIds: [], maxConditionsMet: 0,
+      verdictBanner: 'لم تصل أي تشكيلة للتقييم',
     };
   }
 
-  // Attach selectedClub if missing in evaluation
-  evaluations.forEach((ev) => {
-    if (!ev.selectedClub) {
-      const match = contestants.find((c) => c.id === ev.playerId);
-      if (match?.selectedClub) ev.selectedClub = match.selectedClub;
-    }
-    // Calculate total valid points (conditions + positions)
-    if (ev.totalValidCount === undefined) {
-      ev.totalValidCount = (ev.validConditionsCount || 0) + (ev.validPositionsCount || 0);
-    }
-  });
-
-  // Sort by Rule 1 (highest valid conditions & positions) then Rule 2 (highest overall strength %)
-  const sorted = [...evaluations].sort((a, b) => {
-    const totalA = a.totalValidCount ?? (a.validConditionsCount + a.validPositionsCount);
-    const totalB = b.totalValidCount ?? (b.validConditionsCount + b.validPositionsCount);
-    if (totalB !== totalA) {
-      return totalB - totalA;
-    }
-    // If tied on total valid count, sort by condition count first
-    if (b.validConditionsCount !== a.validConditionsCount) {
-      return b.validConditionsCount - a.validConditionsCount;
-    }
-    // Rule 2 Tie-breaker: Highest overall percentage
-    return b.overallPercentage - a.overallPercentage;
-  });
+  const sorted = [...evaluations].sort((a, b) =>
+    b.validConditionsCount - a.validConditionsCount ||
+    b.overallPercentage - a.overallPercentage ||
+    b.validPositionsCount - a.validPositionsCount
+  );
 
   const winner = sorted[0];
-  const maxConditionsMet = winner.validConditionsCount;
-
-  // Check if there was a tie on valid counts with runner up
   const runnerUp = sorted[1];
-  const totalWinnerValid = winner.totalValidCount ?? (winner.validConditionsCount + winner.validPositionsCount);
-  const totalRunnerValid = runnerUp ? (runnerUp.totalValidCount ?? (runnerUp.validConditionsCount + runnerUp.validPositionsCount)) : -1;
-
-  const isTie = runnerUp && totalWinnerValid === totalRunnerValid;
-  const tiedIds = sorted
-    .filter((e) => (e.totalValidCount ?? (e.validConditionsCount + e.validPositionsCount)) === totalWinnerValid)
-    .map((e) => e.playerId);
-
-  const verdictBanner = `🏆 بطل الجولة: ${winner.playerName} بنسبة قوة [${winner.overallPercentage}%] و [${winner.validConditionsCount}/5] شروط متطابقة!`;
-
-  const tieBreakAnalysis = isTie
-    ? `تعادل في استيفاء الشروط والمراكز (${totalWinnerValid}/10)! حسمت اللائحة التكتيكية الفوز لصالح ${winner.playerName} بنسبة قوة إجمالية بلغت ${winner.overallPercentage}% مقابل ${runnerUp.overallPercentage}% لـ ${runnerUp.playerName} بفضل التناغم الهجومي والتوازن الدفاعي!`
-    : undefined;
+  const isTie = Boolean(runnerUp && runnerUp.validConditionsCount === winner.validConditionsCount);
+  const tiedIds = isTie ? sorted.filter((e) => e.validConditionsCount === winner.validConditionsCount).map((e) => e.playerId) : [];
 
   return {
     evaluations: sorted,
     winnerId: winner.playerId,
     winnerName: winner.playerName,
     winnerClub: winner.selectedClub,
-    isTie: Boolean(isTie),
-    tiedContestantIds: isTie ? tiedIds : [],
-    maxConditionsMet,
-    verdictBanner,
-    tieBreakAnalysis,
+    isTie,
+    tiedContestantIds: tiedIds,
+    maxConditionsMet: winner.validConditionsCount,
+    verdictBanner: `🏆 الفائز بالبطولة: ${winner.playerName} بنسبة قوة ${winner.overallPercentage}% وتحقيق ${winner.validConditionsCount}/5 شروط!`,
+    tieBreakAnalysis: isTie
+      ? `تعادل في الشروط (${winner.validConditionsCount}/5) مع ${runnerUp!.playerName}، وحُسم الفوز لـ ${winner.playerName} بنسبة القوة التكتيكية ${winner.overallPercentage}% مقابل ${runnerUp!.overallPercentage}%.`
+      : undefined,
   };
 }

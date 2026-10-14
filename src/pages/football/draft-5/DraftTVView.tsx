@@ -18,7 +18,7 @@ import {
   getRandomDraftCondition,
 } from '../../../data/draftConditions';
 import { FootballPlayer } from '../../../data/footballMasterData';
-import { evaluateDraftSquadsWithAI } from '../../../utils/aiTacticalJudge';
+import { evaluateDraftSquadsWithAI, evaluateAllSquadsLocally } from '../../../utils/aiTacticalJudge';
 import { DraftTopBar } from './components/DraftTopBar';
 import { DraftTVPitch, TVSlotItem } from './components/DraftTVPitch';
 import { supabase } from '../../../lib/supabase';
@@ -347,103 +347,14 @@ export const DraftTVView: FC = () => {
     // ALL 5 SLOTS COMPLETED FOR EVERYONE! Trigger End-of-Draft Handshake & Evaluation
     sound.playVictory();
     setPhase('AI_REVEAL');
-    setIsEvaluating(true);
+    setVerdictResult(null);
 
     // Broadcast DRAFT_FINISHED and FORCE_PUSH_SQUADS so all mobile clients push their latest full squads immediately
     broadcastEvent({ action: 'DRAFT_FINISHED' });
     broadcastEvent({ action: 'FORCE_PUSH_SQUADS' });
     broadcastEvent({ action: 'AI_EVALUATION_START' });
 
-    // Execute Two-Tier Adjudication after a brief timeout (allowing mobile PUSH_FINAL_SQUAD packets to arrive)
-    setTimeout(() => {
-      let storedSquads: Record<string, any> = {};
-      try {
-        const raw = sessionStorage.getItem(`draft_squads_${roomCode}`);
-        if (raw) storedSquads = JSON.parse(raw);
-      } catch (err) {
-        console.warn('Failed to parse cached draft squads:', err);
-      }
-
-      const currentPersisted = { ...storedSquads, ...persistentSquadsRef.current, ...allSquadsRef.current };
-      const latestContestants = contestantsRef.current.length > 0 ? contestantsRef.current : updatedContestants;
-      const contestantIds = new Set(latestContestants.map((c) => c.id));
-      const allPool = [...latestContestants];
-
-      // Zero-Loss: If any contestant submitted squads but dropped from presence, revive them
-      Object.entries(currentPersisted).forEach(([pId, sq]: [string, any]) => {
-        if (!contestantIds.has(pId) && sq) {
-          allPool.push({
-            id: pId,
-            name: sq.playerName || 'متسابق',
-            selectedClub: sq.selectedClub || (sq.teamLogo ? { id: 'c', name: 'النادي', league: '', country: '', badgeUrl: sq.teamLogo } : null),
-            isReady: true,
-            picks: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
-            pickConditions: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
-            readyForNextRound: false,
-          });
-          contestantIds.add(pId);
-        }
-      });
-
-      const mergedContestants: DraftContestant[] = allPool.map((c) => {
-        const sq = currentPersisted[c.id];
-        const mergedPicks = { ...c.picks };
-        const mergedConds = { ...(c.pickConditions || { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null }) };
-
-        if (sq && sq.slots) {
-          (Object.keys(sq.slots) as DraftPosition[]).forEach((pos) => {
-            const slot = sq.slots[pos];
-            if (slot && !mergedPicks[pos]) {
-              mergedPicks[pos] = {
-                id: 'synced_' + pos + '_' + c.id,
-                name: slot.playerName,
-                aliases: [slot.playerName],
-                nationality: 'غير محدد',
-                nationalityCode: 'UN',
-                clubs: [],
-                currentClub: 'مخصص',
-                position: pos === 'GK' ? 'GK' : pos === 'MID' ? 'MID' : pos === 'FWD' ? 'FWD' : 'DEF',
-                traits: [],
-                trophies: [],
-              };
-              if (!mergedConds[pos]) {
-                mergedConds[pos] = {
-                  id: slot.conditionId || 'c_general',
-                  title: slot.conditionTitle || 'شرط معتمد',
-                  rulePrompt: slot.conditionTitle || 'شرط معتمد',
-                };
-              }
-            }
-          });
-        }
-
-        return {
-          ...c,
-          selectedClub: c.selectedClub || sq?.selectedClub || null,
-          picks: mergedPicks,
-          pickConditions: mergedConds,
-        };
-      });
-
-      evaluateDraftSquadsWithAI(mergedContestants, usedConditionsRef.current).then((result) => {
-        setVerdictResult(result);
-        setIsEvaluating(false);
-
-        // Record win for current round winner
-        if (result.winnerId) {
-          setRoundWins((prev) => ({
-            ...prev,
-            [result.winnerId]: (prev[result.winnerId] || 0) + 1,
-          }));
-        }
-
-        broadcastEvent({
-          action: 'AI_EVALUATION_DONE',
-          evaluations: result.evaluations,
-          verdictResult: result,
-        });
-      });
-    }, 700);
+    // Evaluation is triggered by the built-in evaluator effect once phase === AI_REVEAL
   }, [broadcastEvent, roomCode]);
 
   // Handle Pick Locked from contestant into their chosen position
@@ -782,95 +693,54 @@ export const DraftTVView: FC = () => {
     };
   }, [roomCode, handleContestantPick, saveSquadPick]);
 
-  // Auto-evaluation fallback if TV is on AI_REVEAL but verdictResult is null and not evaluating
+  // ===========================================================================
+  // Built-in Tactical AI Evaluator trigger
+  // Runs automatically whenever the TV enters the evaluation phase without a
+  // verdict. Fully local + synchronous, wrapped in try/catch, so it can never
+  // hang or leave the screen empty.
+  // ===========================================================================
   useEffect(() => {
-    if (phase === 'AI_REVEAL' && !verdictResult && !isEvaluating) {
-      let storedSquads: Record<string, any> = {};
+    const isEvalPhase = phase === 'AI_REVEAL' || phase === 'EVALUATION';
+    if (!isEvalPhase || verdictResult) return;
+
+    setIsEvaluating(true);
+
+    // ~1.8s brutalist "analysis" pause — also gives mobiles time to deliver PUSH_FINAL_SQUAD
+    const timer = setTimeout(() => {
+      let storedSquads: Record<string, PlayerSquad> = {};
       try {
         const raw = sessionStorage.getItem(`draft_squads_${roomCode}`);
         if (raw) storedSquads = JSON.parse(raw);
-      } catch (e) {}
-
-      const combinedSquads = { ...storedSquads, ...persistentSquadsRef.current, ...allSquadsRef.current };
-      const currentList = contestantsRef.current.length > 0 ? contestantsRef.current : contestants;
-      const contestantIds = new Set(currentList.map((c) => c.id));
-      const pool = [...currentList];
-
-      Object.entries(combinedSquads).forEach(([pId, sq]: [string, any]) => {
-        if (!contestantIds.has(pId) && sq) {
-          pool.push({
-            id: pId,
-            name: sq.playerName || 'متسابق',
-            selectedClub: sq.selectedClub || (sq.teamLogo ? { id: 'c', name: 'النادي', league: '', country: '', badgeUrl: sq.teamLogo } : null),
-            isReady: true,
-            picks: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
-            pickConditions: { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null },
-            readyForNextRound: false,
-          });
-          contestantIds.add(pId);
-        }
-      });
-
-      if (pool.length > 0) {
-        setIsEvaluating(true);
-        const mergedContestants: DraftContestant[] = pool.map((c) => {
-          const sq = combinedSquads[c.id];
-          const mergedPicks = { ...c.picks };
-          const mergedConds = { ...(c.pickConditions || { FWD: null, MID: null, DEF_1: null, DEF_2: null, GK: null }) };
-
-          if (sq && sq.slots) {
-            (Object.keys(sq.slots) as DraftPosition[]).forEach((pos) => {
-              const slot = sq.slots[pos];
-              if (slot && !mergedPicks[pos]) {
-                mergedPicks[pos] = {
-                  id: 'synced_' + pos + '_' + c.id,
-                  name: slot.playerName,
-                  aliases: [slot.playerName],
-                  nationality: 'غير محدد',
-                  nationalityCode: 'UN',
-                  clubs: [],
-                  currentClub: 'مخصص',
-                  position: pos === 'GK' ? 'GK' : pos === 'MID' ? 'MID' : pos === 'FWD' ? 'FWD' : 'DEF',
-                  traits: [],
-                  trophies: [],
-                };
-                if (!mergedConds[pos]) {
-                  mergedConds[pos] = {
-                    id: slot.conditionId || 'c_general',
-                    title: slot.conditionTitle || 'شرط معتمد',
-                    rulePrompt: slot.conditionTitle || 'شرط معتمد',
-                  };
-                }
-              }
-            });
-          }
-
-          return {
-            ...c,
-            selectedClub: c.selectedClub || sq?.selectedClub || null,
-            picks: mergedPicks,
-            pickConditions: mergedConds,
-          };
-        });
-
-        evaluateDraftSquadsWithAI(mergedContestants, usedConditionsRef.current).then((result) => {
-          setVerdictResult(result);
-          setIsEvaluating(false);
-          if (result.winnerId) {
-            setRoundWins((prev) => ({
-              ...prev,
-              [result.winnerId]: (prev[result.winnerId] || 0) + 1,
-            }));
-          }
-          broadcastEvent({
-            action: 'AI_EVALUATION_DONE',
-            evaluations: result.evaluations,
-            verdictResult: result,
-          });
-        });
+      } catch (e) {
+        console.warn('[TV] Failed to read cached squads:', e);
       }
-    }
-  }, [phase, verdictResult, isEvaluating, roomCode, broadcastEvent, contestants]);
+      const combinedSquads = { ...storedSquads, ...persistentSquadsRef.current, ...allSquadsRef.current };
+
+      let result: DraftVerdictResult;
+      try {
+        result = evaluateAllSquadsLocally(contestantsRef.current, combinedSquads);
+      } catch (err) {
+        console.error('[TV] Tactical evaluator crashed, retrying with squads only:', err);
+        result = evaluateAllSquadsLocally([], combinedSquads);
+      }
+
+      setVerdictResult(result);
+      setIsEvaluating(false);
+
+      if (result.winnerId) {
+        setRoundWins((prev) => ({ ...prev, [result.winnerId]: (prev[result.winnerId] || 0) + 1 }));
+      }
+
+      broadcastEvent({
+        action: 'AI_EVALUATION_DONE',
+        evaluations: result.evaluations,
+        verdictResult: result,
+      });
+    }, 1800);
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, verdictResult, roomCode]);
 
   const joinUrl = `${window.location.origin}/room/${roomCode}/football/draft-5`;
   const currentPickerId = turnOrder[currentTurnIndex];
@@ -1160,19 +1030,12 @@ export const DraftTVView: FC = () => {
         {/* =======================================================
             STATE 3: TWO-TIER AI VERIFICATION & TACTICAL RESOLUTION
             ======================================================= */}
-        {phase === 'AI_REVEAL' && (
+        {(phase === 'AI_REVEAL' || phase === 'EVALUATION') && (
           <div className="flex flex-col items-center justify-center w-full max-w-6xl space-y-8 animate-fade-in text-center">
             {isEvaluating || !verdictResult ? (
-              <div className="bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-3xl p-12 space-y-4 max-w-xl mx-auto">
-                <div className="w-16 h-16 bg-[#8A9A5B] border-2 border-[#2C2A29] rounded-2xl mx-auto flex items-center justify-center text-3xl animate-bounce text-white">
-                  ⚡
-                </div>
-                <h2 className="text-3xl font-black text-[#2C2A29]">
-                  جاري فحص الشروط والتحليل التكتيكي الذكي...
-                </h2>
-                <p className="text-sm font-bold text-[#5C4033]">
-                  المحرك الآلي يفحص مطابقة اللاعبين للشروط الخمسة، ويحدد الأخطاء بدقة!
-                </p>
+              <div className="text-2xl font-black text-[#2C2A29] p-8 bg-[#F7F4EC] border-3 border-[#2C2A29] rounded-2xl shadow-[6px_6px_0px_#2C2A29] max-w-2xl mx-auto flex flex-col items-center gap-4 animate-pulse">
+                <span className="text-4xl">🧠</span>
+                <span>جاري مراجعة الشروط والمراكز وتحليل التشكيلات بواسطة الذكاء الاصطناعي...</span>
               </div>
             ) : (
               <div className="w-full space-y-8">
@@ -1205,8 +1068,8 @@ export const DraftTVView: FC = () => {
                         />
                       </div>
                     )}
-                    <h2 className="text-3xl md:text-5xl font-black">
-                      فريق {verdictResult.winnerName}
+                    <h2 className="text-2xl md:text-4xl font-black leading-tight">
+                      🏆 الفائز بالبطولة: {verdictResult.winnerName} بنسبة قوة {rankedEvaluations[0]?.overallPercentage}% وتحقيق [{rankedEvaluations[0]?.validConditionsCount}/5] شروط!
                     </h2>
                   </div>
 
@@ -1424,10 +1287,10 @@ export const DraftTVView: FC = () => {
                         >
                           <div>
                             {/* Header */}
-                            <div className="flex items-center justify-between pb-2.5 border-b-2 border-[#2C2A29]">
+                            <div className="flex items-center justify-between pb-3 border-b-2 border-[#2C2A29]">
                               <div className="flex items-center gap-2">
                                 {ev.selectedClub && (
-                                  <img src={ev.selectedClub.badgeUrl} alt="" className="w-7 h-7 object-contain shrink-0" />
+                                  <img src={ev.selectedClub.badgeUrl} alt="" className="w-8 h-8 object-contain shrink-0" />
                                 )}
                                 <div>
                                   <h4 className="text-base font-black text-[#2C2A29] leading-tight">
@@ -1439,20 +1302,26 @@ export const DraftTVView: FC = () => {
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs font-black bg-[#8A9A5B] text-white px-2.5 py-0.5 rounded-lg border border-[#2C2A29]">
-                                  {ev.validConditionsCount}/5 شروط
-                                </span>
-                                <span className="text-xs font-mono font-black bg-[#2C2A29] text-white px-2 py-0.5 rounded-lg">
+                              <div className="flex flex-col items-end">
+                                <span className="text-[10px] font-black text-[#5C4033]">نسبة القوة:</span>
+                                <span className="text-3xl font-black text-[#8A9A5B] font-mono leading-none">
                                   {ev.overallPercentage}%
                                 </span>
                               </div>
                             </div>
 
-                            {/* Slot-by-Slot Analytical Error & Validation Notes */}
+                            {/* Conditions Met Pill */}
+                            <div className="flex items-center justify-between bg-[#E5E0D5] px-3 py-1.5 rounded-xl border border-[#2C2A29] my-2">
+                              <span className="text-xs font-black text-[#2C2A29]">الشروط المحققة:</span>
+                              <span className="text-xs font-black bg-[#8A9A5B] text-white px-2.5 py-0.5 rounded-lg border border-[#2C2A29]">
+                                [{ev.validConditionsCount} من 5]
+                              </span>
+                            </div>
+
+                            {/* الملاحظات والأخطاء: Bullet list of specific player evaluation reasons */}
                             <div className="space-y-2 my-2.5">
-                              <span className="text-[10px] font-black uppercase text-[#5C4033] block">
-                                فحص مطابقة الشروط والمراكز:
+                              <span className="text-[11px] font-black uppercase text-[#5C4033] block">
+                                الملاحظات والأخطاء:
                               </span>
                               {DRAFT_SLOTS_ORDER.map((pos) => {
                                 const sl = pitchSlots[pos];
@@ -1476,31 +1345,25 @@ export const DraftTVView: FC = () => {
                                             isValid ? 'bg-[#8A9A5B] text-white' : 'bg-[#C68B59] text-white'
                                           }`}
                                         >
-                                          {isValid ? '✓ شرط سليم' : '✗ شرط غير محقق'}
+                                          {isValid ? '✓ مطابق' : '✗ غير مطابق'}
                                         </span>
                                         {!isPosValid && (
                                           <span className="text-[9px] font-black px-1.5 py-0.5 rounded border border-[#2C2A29] bg-[#B85C5C] text-white">
-                                            ✗ مركز خاطئ
+                                            ✗ المركز خاطئ
                                           </span>
                                         )}
                                       </div>
                                     </div>
 
-                                    {sl?.conditionTitle && (
-                                      <div className="text-[10px] font-bold text-[#2C2A29]/70">
-                                        الشرط: {sl.conditionTitle}
-                                      </div>
-                                    )}
-
                                     {sl?.conditionReason && (
-                                      <div className="text-[10px] font-bold text-[#2C2A29] bg-[#F7F4EC] p-1 rounded border border-[#2C2A29]/20">
-                                        {sl.conditionReason}
+                                      <div className="text-[10px] font-bold text-[#2C2A29] bg-[#F7F4EC] p-1.5 rounded border border-[#2C2A29]/20">
+                                        • {sl.conditionReason}
                                       </div>
                                     )}
 
                                     {!isPosValid && sl?.positionReason && (
-                                      <div className="text-[10px] font-bold text-[#2C2A29] bg-[#F7F4EC] p-1 rounded border border-[#B85C5C]">
-                                        {sl.positionReason}
+                                      <div className="text-[10px] font-bold text-[#2C2A29] bg-[#F7F4EC] p-1.5 rounded border border-[#B85C5C]">
+                                        • {sl.positionReason}
                                       </div>
                                     )}
                                   </div>
@@ -1532,10 +1395,15 @@ export const DraftTVView: FC = () => {
                               </div>
                             </div>
 
-                            {/* Tactical Commentary */}
-                            <p className="text-xs font-bold text-[#5C4033] mt-2 leading-relaxed">
-                              {ev.detailedBreakdown?.tacticalSummary || ev.critiqueSummary}
-                            </p>
+                            {/* التحليل التكتيكي: Witty Arabic critique summary */}
+                            <div className="bg-[#E5E0D5] border border-[#2C2A29] p-2.5 rounded-xl mt-2 text-right">
+                              <span className="text-[11px] font-black text-[#2C2A29] block mb-0.5">
+                                🧠 التحليل التكتيكي:
+                              </span>
+                              <p className="text-xs font-bold text-[#5C4033] leading-relaxed">
+                                {ev.critiqueSummary || ev.detailedBreakdown?.tacticalSummary}
+                              </p>
+                            </div>
                           </div>
 
                           {/* Strengths Pills */}

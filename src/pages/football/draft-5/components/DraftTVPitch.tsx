@@ -89,7 +89,7 @@ export const DraftTVPitch: FC<DraftTVPitchProps> = ({
                 ✓ مطابق
               </span>
             ) : (
-              <span className="bg-[#B85C5C] text-white text-[9px] font-black px-1.5 py-0.5 rounded border border-[#2C2A29]">
+              <span className="bg-[#C68B59] text-white text-[9px] font-black px-1.5 py-0.5 rounded border border-[#2C2A29]">
                 ✗ غير مطابق
               </span>
             )}
@@ -97,10 +97,10 @@ export const DraftTVPitch: FC<DraftTVPitchProps> = ({
             {slotData?.isPositionValid !== undefined && (
               <span
                 className={`text-[9px] font-black px-1 py-0.5 rounded border border-[#2C2A29] ${
-                  isPosValid ? 'bg-white text-[#2C2A29]' : 'bg-red-100 text-red-900'
+                  isPosValid ? 'bg-[#8A9A5B] text-white' : 'bg-[#B85C5C] text-white'
                 }`}
               >
-                {isPosValid ? '✓ مركز سليم' : '✗ مركز خاطئ'}
+                {isPosValid ? '✓ المركز صحيح' : '✗ المركز خاطئ'}
               </span>
             )}
           </div>
