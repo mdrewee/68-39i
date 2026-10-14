@@ -34,7 +34,12 @@ export const DraftMobileView: FC = () => {
     return pid;
   });
   const [playerName, setPlayerName] = useState<string>(() => {
-    return sessionStorage.getItem('draft_player_name') || '';
+    return (
+      sessionStorage.getItem('party_player_name') ||
+      sessionStorage.getItem('chain_player_name') ||
+      sessionStorage.getItem('draft_player_name') ||
+      'لاعب'
+    );
   });
   const [selectedClub, setSelectedClub] = useState<DraftClub>(() => {
     const cached = sessionStorage.getItem('draft_player_club');
@@ -48,9 +53,14 @@ export const DraftMobileView: FC = () => {
   });
 
   const [hasJoined, setHasJoined] = useState<boolean>(() => {
-    return !!sessionStorage.getItem('draft_player_name');
+    return (
+      sessionStorage.getItem(`draft_joined_${roomCode}`) === 'true' &&
+      !!sessionStorage.getItem('draft_player_club')
+    );
   });
   const [isReady, setIsReady] = useState<boolean>(false);
+  const isReadyRef = useRef<boolean>(false);
+  useEffect(() => { isReadyRef.current = isReady; }, [isReady]);
   const [isClubModalOpen, setIsClubModalOpen] = useState<boolean>(false);
 
   // Game Realtime State (5 Rounds Cycle)
@@ -131,6 +141,11 @@ export const DraftMobileView: FC = () => {
       event: 'draft_event',
       payload,
     });
+    channelRef.current.send({
+      type: 'broadcast',
+      event: 'draft_action',
+      payload,
+    });
   }, []);
 
   // Helper to normalize player names for comparison
@@ -170,26 +185,35 @@ export const DraftMobileView: FC = () => {
   }, [isMyTurn, phase]);
 
   // Join Room - Bulletproof with automatic fallback
-  const handleJoin = (e?: React.FormEvent) => {
+  const handleJoin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const cleanName = playerName.trim();
-    if (!cleanName) return;
+    const storedName =
+      sessionStorage.getItem('party_player_name') ||
+      sessionStorage.getItem('chain_player_name') ||
+      sessionStorage.getItem('draft_player_name') ||
+      playerName.trim() ||
+      'لاعب';
 
-    // Bulletproof Fallback: if no club selected, automatically assign default (Al-Hilal)
+    setPlayerName(storedName);
+    playerNameRef.current = storedName;
+    sound.playClick();
     const finalClub = selectedClub || DRAFT_CURATED_CLUBS[0];
     setSelectedClub(finalClub);
+    selectedClubRef.current = finalClub;
 
-    sound.playClick();
     sessionStorage.setItem('draft_player_id', playerId);
-    sessionStorage.setItem('draft_player_name', cleanName);
+    sessionStorage.setItem('draft_player_name', storedName);
+    sessionStorage.setItem('party_player_name', storedName);
     sessionStorage.setItem('draft_player_club', JSON.stringify(finalClub));
     sessionStorage.setItem('draft_room', roomCode);
+    sessionStorage.setItem(`draft_joined_${roomCode}`, 'true');
     setHasJoined(true);
+    hasJoinedRef.current = true;
 
     if (channelRef.current) {
-      channelRef.current.track({
+      await channelRef.current.track({
         id: playerId,
-        name: cleanName,
+        name: storedName,
         teamId: finalClub.id,
         teamName: finalClub.name,
         teamLogo: finalClub.badgeUrl,
@@ -202,7 +226,7 @@ export const DraftMobileView: FC = () => {
       broadcastEvent({
         action: 'PLAYER_READY',
         playerId,
-        playerName: cleanName,
+        playerName: storedName,
         selectedClub: finalClub,
         teamLogo: finalClub.badgeUrl,
         isReady: false,
@@ -394,20 +418,27 @@ export const DraftMobileView: FC = () => {
     if (!roomCode || !playerId) return;
 
     let isMounted = true;
-    const channelId = `draft5:${roomCode}`;
+    const channelId = `room_${roomCode}_presence`;
+
+    const existingChannel = supabase.getChannels().find(
+      (ch) => ch.topic === `realtime:${channelId}` || ch.topic === channelId
+    );
+    if (existingChannel) {
+      try {
+        supabase.removeChannel(existingChannel);
+      } catch {}
+    }
 
     const channel = supabase.channel(channelId, {
       config: {
-        broadcast: { self: true },
+        broadcast: { self: false },
         presence: { key: playerId },
       },
     });
 
-    channel
-      .on('presence', { event: 'sync' }, () => {})
-      .on('broadcast', { event: 'draft_event' }, ({ payload }) => {
-        if (!isMounted || !payload) return;
-        const ev = payload as DraftEventPayload;
+    const handleIncomingEvent = (payload: any) => {
+      if (!isMounted || !payload) return;
+      const ev = payload as DraftEventPayload;
 
         if (ev.action === 'GAME_START') {
           setPhase('DRAFTING');
@@ -531,22 +562,28 @@ export const DraftMobileView: FC = () => {
           sessionStorage.removeItem('draft_room');
           navigate('/');
         }
-      })
-      .subscribe((status) => {
+    };
+
+    channel
+      .on('presence', { event: 'sync' }, () => {})
+      .on('broadcast', { event: 'draft_event' }, ({ payload }) => handleIncomingEvent(payload))
+      .on('broadcast', { event: 'draft_action' }, ({ payload }) => handleIncomingEvent(payload))
+      .subscribe(async (status) => {
         if (!isMounted) return;
         if (status === 'SUBSCRIBED') {
+          console.log('[Mobile] Subscribed to presence channel successfully:', channelId);
           isSubscribedRef.current = true;
           if (hasJoinedRef.current) {
             const clubToTrack = selectedClubRef.current || DRAFT_CURATED_CLUBS[0];
-            channel.track({
+            await channel.track({
               id: playerIdRef.current,
-              name: playerNameRef.current,
+              name: playerNameRef.current || 'لاعب',
               teamId: clubToTrack.id,
               teamName: clubToTrack.name,
               teamLogo: clubToTrack.badgeUrl,
               selectedClub: clubToTrack,
               joinedAt: Date.now(),
-              isReady: false,
+              isReady: isReadyRef.current,
             });
           }
         } else {
@@ -565,90 +602,85 @@ export const DraftMobileView: FC = () => {
     };
   }, [roomCode, playerId, navigate, broadcastEvent]);
 
-  // Join Screen: Plain Brutalist input + Embedded Team Logo Preview & Selector
+  // Team-Only Selection Screen (Contestant Onboarding before Draft)
   if (!hasJoined) {
+    const storedName =
+      sessionStorage.getItem('party_player_name') ||
+      sessionStorage.getItem('chain_player_name') ||
+      sessionStorage.getItem('draft_player_name') ||
+      playerName ||
+      'لاعب';
+
     return (
       <div
         className="min-h-screen w-full bg-[#E5E0D5] text-[#2C2A29] flex flex-col justify-center items-center p-4 font-sans select-none"
         dir="rtl"
       >
-        <div className="w-full max-w-sm bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-2xl p-6 space-y-5">
-          <div className="text-center space-y-1">
-            <div className="inline-flex items-center gap-1.5 bg-[#8A9A5B] text-white px-3 py-1 rounded-xl text-xs font-black mb-1">
-              <Shield size={14} />
-              <span>دخول المتسابقين</span>
-            </div>
-            <h1 className="text-2xl font-black text-[#2C2A29]">كوّن فريقك 5</h1>
-            <p className="text-xs font-bold text-[#5C4033]">
-              غرفة: <span className="font-mono font-black">{roomCode}</span>
+        <div className="w-full max-w-lg bg-[#F7F4EC] border-3 border-[#2C2A29] shadow-[6px_6px_0px_#2C2A29] rounded-2xl p-5 sm:p-6 flex flex-col space-y-4 my-auto">
+          {/* Welcoming Header */}
+          <div>
+            <h2 className="text-xl font-black text-[#2C2A29] text-center mb-1">
+              أهلاً يا {storedName}
+            </h2>
+            <p className="text-sm font-bold text-[#2C2A29]/70 text-center mb-4">
+              اختر شعار ناديك للبطولة:
             </p>
           </div>
 
-          <form onSubmit={handleJoin} className="space-y-4">
-            {/* 1. Name Input */}
-            <div>
-              <label className="block text-xs font-black text-[#5C4033] mb-1.5">
-                اسمك:
-              </label>
-              <input
-                type="text"
-                value={playerName}
-                onChange={(e) => setPlayerName(e.target.value)}
-                placeholder="اكتب اسمك..."
-                className="w-full bg-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl px-4 py-3 font-bold text-[#2C2A29] outline-none text-sm focus:ring-2 focus:ring-[#8A9A5B]"
-                maxLength={20}
-                required
-              />
-            </div>
-
-            {/* 2. Selected Team Badge Preview & Open Selector */}
-            <div>
-              <label className="block text-xs font-black text-[#5C4033] mb-1.5">
-                فريقك المختار:
-              </label>
-              <div className="bg-white border-2 border-[#2C2A29] shadow-[3px_3px_0px_#2C2A29] rounded-xl p-3 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-11 h-11 rounded-lg bg-[#F7F4EC] border border-[#2C2A29] p-1 flex items-center justify-center shrink-0">
+          {/* 20 Curated Elite Clubs Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 max-h-[58vh] overflow-y-auto p-1.5 rounded-xl border-2 border-[#2C2A29]/20 bg-white/60">
+            {DRAFT_CURATED_CLUBS.map((club) => {
+              const isSelected = selectedClub?.id === club.id;
+              return (
+                <button
+                  key={club.id}
+                  type="button"
+                  onClick={() => {
+                    sound.playClick();
+                    setSelectedClub(club);
+                  }}
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all cursor-pointer text-center relative ${
+                    isSelected
+                      ? 'bg-[#8A9A5B]/20 border-[#8A9A5B] shadow-[3px_3px_0px_#8A9A5B] scale-[1.02]'
+                      : 'bg-white border-[#2C2A29] shadow-[2px_2px_0px_#2C2A29] hover:bg-[#F7F4EC]'
+                  }`}
+                >
+                  <div className="w-12 h-12 flex items-center justify-center mb-1.5">
                     <img
-                      src={selectedClub.badgeUrl}
-                      alt={selectedClub.name}
+                      src={club.badgeUrl}
+                      alt={club.name}
                       className="w-full h-full object-contain"
                       referrerPolicy="no-referrer"
+                      loading="lazy"
                     />
                   </div>
-                  <div className="min-w-0">
-                    <span className="text-[11px] font-bold text-[#5C4033] block">الفريق الحالي:</span>
-                    <span className="text-sm font-black text-[#2C2A29] block truncate">{selectedClub.name}</span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsClubModalOpen(true)}
-                  className="bg-[#C68B59] hover:bg-[#B57A48] text-white text-xs font-black px-3.5 py-2 rounded-xl border border-[#2C2A29] shadow-sm hover:opacity-95 transition-all shrink-0 cursor-pointer"
-                >
-                  تغيير الفريق
+                  <span className="font-black text-xs text-[#2C2A29] leading-tight">
+                    {club.name}
+                  </span>
+                  <span className="text-[10px] text-[#5C4033] font-bold mt-0.5 truncate max-w-full">
+                    {club.country}
+                  </span>
+                  {isSelected && (
+                    <div className="absolute top-1.5 left-1.5 bg-[#8A9A5B] text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-black shadow-sm">
+                      ✓
+                    </div>
+                  )}
                 </button>
-              </div>
-            </div>
+              );
+            })}
+          </div>
 
-            {/* 3. Join Room Button */}
+          {/* Single primary Olivine Green button at the bottom */}
+          <div>
             <button
-              type="submit"
-              disabled={!playerName.trim()}
-              className="w-full bg-[#8A9A5B] hover:bg-[#78884E] disabled:opacity-50 text-white font-black text-base py-3.5 rounded-xl border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-y-0.5 active:shadow-[2px_2px_0px_#2C2A29] transition-all cursor-pointer mt-2"
+              type="button"
+              onClick={() => handleJoin()}
+              className="bg-[#8A9A5B] hover:bg-[#78884E] text-white py-3.5 px-6 rounded-xl font-black text-lg w-full border-2 border-[#2C2A29] shadow-[4px_4px_0px_#2C2A29] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[2px_2px_0px_#2C2A29] transition-all cursor-pointer"
             >
-              دخول الغرفة
+              تأكيد ودخول اللوبي
             </button>
-          </form>
+          </div>
         </div>
-
-        {/* 20 Curated Clubs Modal */}
-        <DraftClubPickerModal
-          isOpen={isClubModalOpen}
-          selectedClubId={selectedClub?.id}
-          onSelectClub={handleSelectClub}
-          onClose={() => setIsClubModalOpen(false)}
-        />
       </div>
     );
   }

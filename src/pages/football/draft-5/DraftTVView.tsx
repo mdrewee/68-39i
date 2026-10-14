@@ -118,6 +118,11 @@ export const DraftTVView: FC = () => {
       event: 'draft_event',
       payload,
     });
+    channelRef.current.send({
+      type: 'broadcast',
+      event: 'draft_action',
+      payload,
+    });
   }, []);
 
   const handleCopyCode = async () => {
@@ -459,7 +464,7 @@ export const DraftTVView: FC = () => {
   useEffect(() => {
     if (!roomCode) return;
 
-    const channelId = `draft5:${roomCode}`;
+    const channelId = `room_${roomCode}_presence`;
 
     const existingChannel = supabase.getChannels().find(
       (ch) => ch.topic === `realtime:${channelId}` || ch.topic === channelId
@@ -468,7 +473,7 @@ export const DraftTVView: FC = () => {
 
     const channel = supabase.channel(channelId, {
       config: {
-        broadcast: { self: true },
+        broadcast: { self: false },
         presence: { key: 'host_tv' },
       },
     });
@@ -509,12 +514,6 @@ export const DraftTVView: FC = () => {
       });
     };
 
-    channel
-      .on('presence', { event: 'sync' }, syncConnectedPlayers)
-      .on('presence', { event: 'join' }, ({ newPresences }) => {
-        sound.playPlayerJoin();
-        syncConnectedPlayers();
-      })
     const handleIncomingDraftEvent = (payload: any) => {
       if (!payload) return;
       const ev = payload as DraftEventPayload;
@@ -711,6 +710,7 @@ export const DraftTVView: FC = () => {
       .on('broadcast', { event: 'draft_action' }, ({ payload }) => handleIncomingDraftEvent(payload))
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
+          console.log('[TV] Subscribed to presence channel successfully.');
           isSubscribedRef.current = true;
           channel.track({
             id: 'host_tv',
@@ -718,6 +718,7 @@ export const DraftTVView: FC = () => {
             role: 'tv',
             joinedAt: Date.now(),
           });
+          syncConnectedPlayers();
         } else {
           isSubscribedRef.current = false;
         }
